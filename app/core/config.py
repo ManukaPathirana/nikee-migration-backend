@@ -58,6 +58,7 @@ class Settings(BaseSettings):
     storage_backend: Literal["local", "s3"] = "local"
     local_storage_dir: str = "./storage"
     signed_url_expire_seconds: int = 300
+    max_upload_bytes: int = 10 * 1024 * 1024
     s3_endpoint_url: str = ""
     s3_bucket: str = ""
     s3_access_key_id: str = ""
