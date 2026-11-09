@@ -8,6 +8,7 @@ from app.api.v1 import (
     files,
     health,
     inquiries,
+    meetings,
     staff,
     users,
     visa,
@@ -22,5 +23,6 @@ api_router.include_router(visa.router)
 api_router.include_router(applications.router)
 api_router.include_router(files.router)
 api_router.include_router(inquiries.router)
+api_router.include_router(meetings.router)
 api_router.include_router(staff.router)
 api_router.include_router(admin.router)

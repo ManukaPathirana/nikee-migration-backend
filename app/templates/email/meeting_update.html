@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}{{ heading }}{% endblock %}
+{% block content %}
+<h2 style="margin:0 0 12px;font-size:20px;font-weight:600;color:#0B2A4A;">{{ heading }}</h2>
+<p style="margin:0 0 16px;">Hi {{ name }},</p>
+<p style="margin:0 0 16px;">{{ message }}</p>
+{% if slots %}
+<p style="margin:0 0 8px;font-weight:600;">Proposed times ({{ timezone }}):</p>
+<ul style="margin:0 0 16px;padding-left:20px;">
+  {% for s in slots %}<li style="margin-bottom:4px;">{{ s }}</li>{% endfor %}
+</ul>
+{% endif %}
+{% if note %}
+<p style="margin:0 0 16px;padding:12px 16px;background:#F7F8FA;border-radius:12px;">{{ note }}</p>
+{% endif %}
+<table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;border:1px solid #E5E7EB;border-radius:12px;">
+  {% if when %}<tr><td style="padding:12px 16px;color:#6B7280;font-size:13px;width:110px;">When</td><td style="padding:12px 16px;font-weight:600;">{{ when }}</td></tr>{% endif %}
+  <tr><td style="padding:12px 16px;color:#6B7280;font-size:13px;border-top:1px solid #E5E7EB;width:110px;">How</td><td style="padding:12px 16px;border-top:1px solid #E5E7EB;">{{ how }}</td></tr>
+  <tr><td style="padding:12px 16px;color:#6B7280;font-size:13px;border-top:1px solid #E5E7EB;">Where</td><td style="padding:12px 16px;border-top:1px solid #E5E7EB;">{% if link %}<a href="{{ link }}" style="color:#1E4FA3;">{{ where }}</a>{% else %}{{ where }}{% endif %}</td></tr>
+  <tr><td style="padding:12px 16px;color:#6B7280;font-size:13px;border-top:1px solid #E5E7EB;">Inquiry</td><td style="padding:12px 16px;border-top:1px solid #E5E7EB;">{{ ref_no }} — {{ subject }}</td></tr>
+</table>
+{% if action_hint %}<p style="margin:16px 0 0;color:#6B7280;">{{ action_hint }}</p>{% endif %}
+{% endblock %}
