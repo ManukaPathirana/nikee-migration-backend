@@ -84,6 +84,18 @@ OTP codes: 6 digits, 10 min, max 5 wrong attempts; stored as HMAC hashes.
   (acting on an unclaimed one claims it); cancel and reopen need a reason; every change writes
   history + audit + customer notification + email (`inquiry_update.html`).
 
+## Meetings API
+- `GET /meetings?status=&inquiry_id=&start_from=&start_to=` (customer: own, staff: hosted, admin: all)
+- `POST /meetings` (staff/admin: inquiry_id, mode online|in_person|phone, link/location, 1-3 slots)
+- `POST /meetings/{id}/propose` (new slots), `/select-slot` + `/request-reschedule` (customer),
+  `/cancel` (reason) + `/complete` (host/admin)
+- Flow: proposed → confirmed (customer picks; .ics REQUEST emailed to both) or reschedule_requested
+  → proposed again; confirmed → completed | cancelled (.ics CANCEL, `ics_sequence` bumped).
+- Reminders: `meeting_service.send_due_reminders` runs every minute (arq cron when REDIS_URL is set,
+  otherwise an in-process loop started in `app.main` lifespan). Each reminder is claimed with a
+  conditional UPDATE on `reminder_24h_sent_at` / `reminder_1h_sent_at`, so it is sent exactly once.
+- Email times use `BUSINESS_TIMEZONE` (default Asia/Colombo; needs `tzdata` on Windows).
+
 - Files: type detected from content (PDF/PNG/JPEG only), max `MAX_UPLOAD_BYTES`; keys
   `applications/{app_id}/{uuid}.{ext}`. Local downloads use `/api/v1/files/{signed-token}` (relative URL).
 
