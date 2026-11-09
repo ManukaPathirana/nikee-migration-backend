@@ -1,12 +1,16 @@
 import uuid
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 from sqlalchemy import ForeignKey, Index, String, Text, true
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.security import utcnow
 from app.db.base import Base, TimestampMixin, UUIDPkMixin, pg_enum
 from app.models.enums import InquiryStatus
+
+if TYPE_CHECKING:
+    from app.models.user import User
 
 
 class Inquiry(UUIDPkMixin, TimestampMixin, Base):
@@ -34,6 +38,15 @@ class Inquiry(UUIDPkMixin, TimestampMixin, Base):
     )
     closed_at: Mapped[datetime | None]
 
+    customer: Mapped["User"] = relationship(foreign_keys=[customer_id])
+    assigned_staff: Mapped["User | None"] = relationship(foreign_keys=[assigned_staff_id])
+    history: Mapped[list["InquiryStatusHistory"]] = relationship(
+        cascade="all, delete-orphan", order_by="InquiryStatusHistory.changed_at"
+    )
+    notes: Mapped[list["InquiryNote"]] = relationship(
+        cascade="all, delete-orphan", order_by="InquiryNote.created_at"
+    )
+
 
 class InquiryStatusHistory(UUIDPkMixin, TimestampMixin, Base):
     __tablename__ = "inquiry_status_history"
@@ -51,6 +64,8 @@ class InquiryStatusHistory(UUIDPkMixin, TimestampMixin, Base):
     reason: Mapped[str | None] = mapped_column(Text)
     changed_at: Mapped[datetime] = mapped_column(default=utcnow)
 
+    actor: Mapped["User | None"] = relationship(foreign_keys=[changed_by])
+
 
 class InquiryNote(UUIDPkMixin, TimestampMixin, Base):
     __tablename__ = "inquiry_notes"
@@ -61,3 +76,5 @@ class InquiryNote(UUIDPkMixin, TimestampMixin, Base):
     author_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
     body: Mapped[str] = mapped_column(Text)
     is_internal: Mapped[bool] = mapped_column(default=True, server_default=true())
+
+    author: Mapped["User | None"] = relationship(foreign_keys=[author_id])

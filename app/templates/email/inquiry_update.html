@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}{{ heading }}{% endblock %}
+{% block content %}
+<h2 style="margin:0 0 12px;font-size:20px;font-weight:600;color:#0B2A4A;">{{ heading }}</h2>
+<p style="margin:0 0 16px;">Hi {{ name }},</p>
+<p style="margin:0 0 16px;">{{ message }}</p>
+{% if reason %}
+<p style="margin:0 0 16px;padding:12px 16px;background:#F7F8FA;border-radius:12px;">Note from our team: {{ reason }}</p>
+{% endif %}
+<table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;border:1px solid #E5E7EB;border-radius:12px;">
+  <tr><td style="padding:12px 16px;color:#6B7280;font-size:13px;width:110px;">Reference</td><td style="padding:12px 16px;font-weight:600;">{{ ref_no }}</td></tr>
+  <tr><td style="padding:12px 16px;color:#6B7280;font-size:13px;border-top:1px solid #E5E7EB;">Subject</td><td style="padding:12px 16px;border-top:1px solid #E5E7EB;">{{ subject }}</td></tr>
+  <tr><td style="padding:12px 16px;color:#6B7280;font-size:13px;border-top:1px solid #E5E7EB;">Status</td><td style="padding:12px 16px;border-top:1px solid #E5E7EB;text-transform:capitalize;">{{ status }}</td></tr>
+</table>
+{% endblock %}

@@ -4,6 +4,8 @@ from app.api.v1.company import get_company_row
 from app.core.deps import AdminUser, DbSession
 from app.models import CompanyInfo
 from app.schemas.company import CompanyOut, CompanyUpdate
+from app.schemas.inquiry import BoardOut, InquiryOut
+from app.services import inquiry_service
 from app.services.audit_service import audit
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -29,3 +31,13 @@ async def update_company(data: CompanyUpdate, user: AdminUser, db: DbSession) ->
     )
     await db.commit()
     return company
+
+
+@router.get("/inquiries/board", response_model=BoardOut)
+async def inquiry_board(_: AdminUser, db: DbSession) -> BoardOut:
+    """Kanban: latest 50 inquiries per status column, plus total counts."""
+    columns = await inquiry_service.board(db)
+    return BoardOut(
+        columns={s: [InquiryOut.model_validate(i) for i in rows] for s, rows in columns.items()},
+        counts=await inquiry_service.board_counts(db),
+    )
