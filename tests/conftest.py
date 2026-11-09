@@ -15,10 +15,17 @@ from typing import Any  # noqa: E402
 
 import pytest  # noqa: E402
 from httpx import ASGITransport, AsyncClient  # noqa: E402
+from passlib.context import CryptContext  # noqa: E402
 from sqlalchemy import text  # noqa: E402
 from sqlalchemy.ext.asyncio import AsyncSession  # noqa: E402
 
+from app.core import security  # noqa: E402
 from app.core.security import hash_password  # noqa: E402
+
+# Tests only: cheap argon2 settings so login-heavy tests run fast. Production keeps the defaults.
+security._pwd_context = CryptContext(
+    schemes=["argon2"], argon2__time_cost=1, argon2__memory_cost=1024, argon2__parallelism=1
+)
 from app.db.session import SessionLocal, engine  # noqa: E402
 from app.main import app  # noqa: E402
 from app.models import Base, CustomerProfile, StaffProfile, User, UserRole  # noqa: E402
