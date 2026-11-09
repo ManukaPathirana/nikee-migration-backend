@@ -1,3 +1,5 @@
+import asyncio
+import contextlib
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -11,13 +13,22 @@ from app.core.errors import register_exception_handlers
 from app.core.rate_limit import limiter
 from app.db.session import engine
 from app.services import job_queue
+from app.workers.meeting_reminders import run_reminder_loop
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+    # Without Redis there is no arq worker, so run the reminder sweep inside the API.
+    reminder_task: asyncio.Task[None] | None = None
+    if not settings.redis_url and not settings.is_test:
+        reminder_task = asyncio.create_task(run_reminder_loop())
     yield
+    if reminder_task is not None:
+        reminder_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await reminder_task
     await job_queue.shutdown()
     await engine.dispose()
 
