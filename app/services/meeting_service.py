@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.config import settings
-from app.core.errors import BadRequest, Forbidden, NotFound
+from app.core.errors import BadRequest, Conflict, Forbidden, NotFound
 from app.core.security import utcnow
 from app.models import (
     Inquiry,
@@ -168,12 +168,25 @@ async def create_meeting(
             inquiry.assigned_staff_id = staff.id  # scheduling a meeting claims the inquiry
         elif inquiry.assigned_staff_id != staff.id:
             raise Forbidden("This inquiry is assigned to another team member", code="not_assigned")
+    elif inquiry.assigned_staff_id is None:
+        # Meetings are always hosted by a consultant; the admin assigns one first.
+        raise BadRequest(
+            "Assign this inquiry to a staff member before scheduling a meeting",
+            code="needs_assignment",
+        )
+    if await db.scalar(
+        select(Meeting.id)
+        .where(Meeting.inquiry_id == inquiry.id, Meeting.status.in_(OPEN))
+        .limit(1)
+    ):
+        raise Conflict(
+            "This inquiry already has an open meeting. Open it to propose new times instead.",
+            code="meeting_exists",
+        )
     _validate_slots(slots)
 
-    # The admin may schedule on behalf of the assigned consultant.
-    host_id = staff.id
-    if staff.role == UserRole.ADMIN and inquiry.assigned_staff_id is not None:
-        host_id = inquiry.assigned_staff_id
+    # The assigned consultant hosts the meeting (also when the admin schedules it).
+    host_id = inquiry.assigned_staff_id
 
     meeting = Meeting(
         inquiry_id=inquiry.id,

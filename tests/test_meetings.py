@@ -185,6 +185,62 @@ async def test_access_control(client: AsyncClient, db, ctx):
     assert (await client.get(API, headers=other)).json()["total"] == 0
 
 
+async def test_admin_flow_assign_then_schedule_single_meeting(client: AsyncClient, db, ctx):
+    """Regression: customer inquiry -> admin -> assign -> staff schedules.
+    Admin scheduling on an unassigned inquiry used to make the admin the host, and a second
+    meeting could be created for the same inquiry."""
+    resp = await client.post(
+        "/api/v1/inquiries",
+        json={"subject": "Second question", "description": "Another question for you."},
+        headers=ctx["cust"],
+    )
+    inquiry_id = resp.json()["id"]
+    body = {"inquiry_id": inquiry_id, "mode": "phone", "slots": [_slot(30)]}
+
+    # Admin can't schedule before assigning a consultant.
+    resp = await client.post(API, json=body, headers=ctx["admin"])
+    assert resp.status_code == 400
+    assert resp.json()["error"]["code"] == "needs_assignment"
+
+    staff = (await client.get("/api/v1/staff", headers=ctx["admin"])).json()
+    s1 = next(s for s in staff if s["email"] == "s1@example.com")
+    assert s1["invite_pending"] is False
+    await client.post(
+        f"/api/v1/inquiries/{inquiry_id}/assign", json={"staff_id": s1["id"]}, headers=ctx["admin"]
+    )
+
+    # Admin schedules on behalf of the consultant: the consultant is the host.
+    resp = await client.post(API, json=body, headers=ctx["admin"])
+    assert resp.status_code == 201, resp.text
+    meeting = resp.json()
+    assert meeting["staff"]["email"] == "s1@example.com"
+
+    # Only one open meeting per inquiry — new times go on the existing meeting.
+    resp = await client.post(API, json=body, headers=ctx["s1"])
+    assert resp.status_code == 409
+    assert resp.json()["error"]["code"] == "meeting_exists"
+    resp = await client.post(
+        f"{API}/{meeting['id']}/propose", json={"slots": [_slot(40)]}, headers=ctx["s1"]
+    )
+    assert resp.status_code == 200
+
+    # Reassigning moves the open meeting to the new consultant.
+    s2 = next(s for s in staff if s["email"] == "s2@example.com")
+    await client.post(
+        f"/api/v1/inquiries/{inquiry_id}/assign", json={"staff_id": s2["id"]}, headers=ctx["admin"]
+    )
+    resp = await client.get(f"{API}/{meeting['id']}", headers=ctx["s2"])
+    assert resp.status_code == 200
+    assert resp.json()["staff"]["email"] == "s2@example.com"
+
+    # Once the meeting is closed, a new one can be scheduled.
+    await client.post(
+        f"{API}/{meeting['id']}/cancel", json={"reason": "Customer travelling"}, headers=ctx["s2"]
+    )
+    resp = await client.post(API, json=body, headers=ctx["s2"])
+    assert resp.status_code == 201
+
+
 async def test_reminders_sent_once_at_24h_and_1h(client: AsyncClient, db: AsyncSession, ctx):
     meeting = (await _propose(client, ctx, slots=[_slot(30)])).json()
     await client.post(

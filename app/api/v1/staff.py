@@ -22,6 +22,7 @@ async def list_active_staff(_: StaffOrAdmin, db: DbSession) -> list[StaffBrief]:
             full_name=u.full_name,
             email=u.email,
             designation=u.staff_profile.designation if u.staff_profile else None,
+            invite_pending=u.password_hash is None,
         )
         for u in rows
     ]

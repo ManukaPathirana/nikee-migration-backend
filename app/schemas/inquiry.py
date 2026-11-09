@@ -90,3 +90,4 @@ class StaffBrief(ORMModel):
     full_name: str
     email: str
     designation: str | None = None
+    invite_pending: bool = False  # hasn't accepted the invite yet, can't sign in

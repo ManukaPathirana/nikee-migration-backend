@@ -3,7 +3,7 @@
 import uuid
 from typing import Literal
 
-from sqlalchemy import Select, func, or_, select, text
+from sqlalchemy import Select, func, or_, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -14,6 +14,8 @@ from app.models import (
     InquiryNote,
     InquiryStatus,
     InquiryStatusHistory,
+    Meeting,
+    MeetingStatus,
     User,
     UserRole,
     VisaApplication,
@@ -233,6 +235,21 @@ async def assign(db: AsyncSession, inquiry: Inquiry, admin: User, staff_id: uuid
         raise BadRequest("Choose an active staff member", code="invalid_staff")
     previous = inquiry.assigned_staff_id
     inquiry.assigned_staff_id = staff.id
+    # Open meetings follow the inquiry to the new consultant so they can run them.
+    await db.execute(
+        update(Meeting)
+        .where(
+            Meeting.inquiry_id == inquiry.id,
+            Meeting.status.in_(
+                [
+                    MeetingStatus.PROPOSED,
+                    MeetingStatus.CONFIRMED,
+                    MeetingStatus.RESCHEDULE_REQUESTED,
+                ]
+            ),
+        )
+        .values(staff_id=staff.id)
+    )
     notify(
         db,
         user_id=staff.id,
