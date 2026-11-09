@@ -56,6 +56,10 @@ class Settings(BaseSettings):
     smtp_use_tls: bool = True
     resend_api_key: str = ""
 
+    # Push notifications (Firebase Cloud Messaging). Both empty = push disabled.
+    fcm_project_id: str = ""
+    fcm_credentials_file: str = ""
+
     # Storage
     storage_backend: Literal["local", "s3"] = "local"
     local_storage_dir: str = "./storage"

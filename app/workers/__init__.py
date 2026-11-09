@@ -6,9 +6,11 @@ from arq.connections import RedisSettings
 from app.core.config import settings
 from app.workers.meeting_reminders import meeting_reminders_job
 from app.workers.send_email import send_email_job
+from app.workers.send_push import send_push_job
 
 JOB_FUNCTIONS = {
     "send_email": send_email_job,
+    "send_push": send_push_job,
 }
 
 

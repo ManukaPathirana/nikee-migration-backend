@@ -9,6 +9,7 @@ from app.api.v1 import (
     health,
     inquiries,
     meetings,
+    notifications,
     reviews,
     staff,
     users,
@@ -26,5 +27,6 @@ api_router.include_router(files.router)
 api_router.include_router(inquiries.router)
 api_router.include_router(meetings.router)
 api_router.include_router(reviews.router)
+api_router.include_router(notifications.router)
 api_router.include_router(staff.router)
 api_router.include_router(admin.router)
