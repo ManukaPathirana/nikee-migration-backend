@@ -7,7 +7,10 @@ FastAPI API for the Nikee Migrations mobile platform (customers, staff, admin).
 - SQLAlchemy 2.x (async) + asyncpg, Alembic migrations, PostgreSQL 15+ (local dev: PostgreSQL 18)
 - Pydantic v2 + pydantic-settings (config from `.env`)
 - Auth: JWT access token (15 min) + rotating refresh tokens stored hashed; argon2 password hashing
-- Background jobs: arq + Redis (all emails sent via jobs, never inline)
+- Background jobs: arq + Redis (all emails sent via jobs, never inline).
+  Jobs are enqueued through one `services/job_queue` interface: if `REDIS_URL` is set it uses arq,
+  otherwise it runs them as in-process asyncio background tasks plus an in-process reminder scheduler.
+  This machine has no Redis (Memurai's installer fails here), so local dev runs with `REDIS_URL` empty.
 - Email: console/file backend in dev, SMTP/Resend in prod
 - Storage: local filesystem adapter in dev, S3-compatible (boto3) in prod; private files, short-lived signed URLs
 - Rate limiting: slowapi. Calendar invites: icalendar.
@@ -38,7 +41,7 @@ pip install -r requirements.txt -r requirements-dev.txt
 alembic upgrade head
 python -m app.scripts.seed
 uvicorn app.main:app --reload            # API at http://localhost:8000, docs at /docs
-arq app.workers.WorkerSettings           # background worker (needs Redis)
+arq app.workers.WorkerSettings           # background worker (only when REDIS_URL is set)
 pytest
 ruff check . ; black --check .
 ```
