@@ -57,7 +57,7 @@ async def create_review(
             db,
             user_id=inquiry.assigned_staff_id,
             type="review_received",
-            title=f"New {rating}★ review for {inquiry.ref_no}",
+            title=f"New {rating}-star review for {inquiry.ref_no}",
             body=review.comment,
             data={"inquiry_id": str(inquiry.id)},
         )
