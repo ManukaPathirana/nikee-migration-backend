@@ -1,5 +1,5 @@
 import uuid
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, EmailStr, Field, HttpUrl
 
@@ -23,7 +23,7 @@ class CompanyUpdate(BaseModel):
     about: str | None = Field(default=None, max_length=5000)
     website_url: HttpUrl | None = None
     phone: str | None = Field(default=None, max_length=40)
-    email: EmailStr | None = None
+    email: EmailStr | Literal[""] | None = None  # "" clears the field
     whatsapp: str | None = Field(default=None, max_length=40)
     address: str | None = Field(default=None, max_length=1000)
     socials: dict[str, str] | None = None
