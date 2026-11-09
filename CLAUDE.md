@@ -96,6 +96,19 @@ OTP codes: 6 digits, 10 min, max 5 wrong attempts; stored as HMAC hashes.
   conditional UPDATE on `reminder_24h_sent_at` / `reminder_1h_sent_at`, so it is sent exactly once.
 - Email times use `BUSINESS_TIMEZONE` (default Asia/Colombo; needs `tzdata` on Windows).
 
+## Admin & reviews API
+- `GET /admin/dashboard` (counts, inquiries per week in UTC, recent audit activity)
+- Staff: `GET/POST /admin/staff`, `PATCH /admin/staff/{id}`, `POST /admin/staff/{id}/active`,
+  `POST /admin/staff/{id}/resend-invite`. New staff have no password until they accept the invite.
+- Customers: `GET /admin/customers`, `GET /admin/customers/{id}` (profile + applications + inquiries),
+  `POST /admin/customers/{id}/active`. Deactivating revokes refresh tokens; access tokens stop working
+  immediately because `get_current_user` checks `is_active`.
+- Reviews: `POST /reviews` (customer, completed inquiry, one per inquiry), `GET /reviews` (own),
+  `GET /reviews/public` (visible + unflagged, author shown as "Jane P."), `GET/PATCH /admin/reviews`.
+- Visa types: `GET/POST /admin/visa-types`, `PATCH /admin/visa-types/{id}`,
+  `POST /admin/visa-types/{id}/requirements`, `PATCH/DELETE /admin/requirements/{id}`.
+- Avoid non-ASCII symbols like ★ in user-facing text (the app font has no glyph for them).
+
 - Files: type detected from content (PDF/PNG/JPEG only), max `MAX_UPLOAD_BYTES`; keys
   `applications/{app_id}/{uuid}.{ext}`. Local downloads use `/api/v1/files/{signed-token}` (relative URL).
 
