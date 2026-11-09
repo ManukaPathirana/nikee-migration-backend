@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block title %}You're invited{% endblock %}
+{% block content %}
+<h2 style="margin:0 0 12px;font-size:20px;font-weight:600;color:#0B2A4A;">You're invited to join the team</h2>
+<p style="margin:0 0 16px;">Hi {{ name }},</p>
+<p style="margin:0 0 16px;">{{ invited_by }} has created a staff account for you on Nikee Migrations. Set your password to get started:</p>
+<p style="margin:0 0 20px;text-align:center;">
+  <a href="{{ link }}" style="display:inline-block;padding:12px 28px;background:#0B2A4A;color:#FFFFFF;border-radius:12px;text-decoration:none;font-weight:500;">Set my password</a>
+</p>
+<p style="margin:0 0 8px;color:#6B7280;">Using the mobile app? Choose "I have an invite" on the sign-in screen and paste this code:</p>
+<p style="margin:0 0 16px;font-family:Consolas,monospace;font-size:12px;word-break:break-all;background:#F7F8FA;padding:10px;border-radius:8px;">{{ token }}</p>
+<p style="margin:0;color:#6B7280;">This invite expires in {{ hours }} hours.</p>
+{% endblock %}

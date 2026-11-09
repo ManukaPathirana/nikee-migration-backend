@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block title %}Verify your email{% endblock %}
+{% block content %}
+<h2 style="margin:0 0 12px;font-size:20px;font-weight:600;color:#0B2A4A;">Verify your email</h2>
+<p style="margin:0 0 16px;">Hi {{ name }},</p>
+<p style="margin:0 0 16px;">Welcome to Nikee Migrations. Enter this code in the app to verify your email address:</p>
+<p style="margin:0 0 16px;text-align:center;">
+  <span style="display:inline-block;padding:12px 24px;background:#F5EBC8;border-radius:12px;font-size:28px;font-weight:600;letter-spacing:8px;color:#0B2A4A;">{{ code }}</span>
+</p>
+<p style="margin:0 0 8px;color:#6B7280;">This code expires in {{ minutes }} minutes.</p>
+<p style="margin:0;color:#6B7280;">If you didn't create an account, you can ignore this email.</p>
+{% endblock %}
