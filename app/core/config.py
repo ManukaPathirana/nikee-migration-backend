@@ -17,6 +17,8 @@ class Settings(BaseSettings):
     app_name: str = "Nikee Migrations API"
     api_v1_prefix: str = "/api/v1"
     frontend_url: str = "http://localhost:5000"
+    # Times in emails are shown in this zone (apps show the device's local time).
+    business_timezone: str = "Asia/Colombo"
     cors_origins: str = ""
 
     # Database
