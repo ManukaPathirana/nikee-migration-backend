@@ -73,6 +73,17 @@ OTP codes: 6 digits, 10 min, max 5 wrong attempts; stored as HMAC hashes.
   `POST /documents/{id}/review` (staff/admin; reason required to reject; notifies + emails customer)
 - Application status: draft → submitted (all mandatory docs uploaded) → in_review → approved
   (all mandatory docs approved) | rejected; customer can withdraw while open.
+## Inquiries API
+- `GET /inquiries?scope=all|queue|mine&status=&assigned_staff_id=&q=` (customers: own only),
+  `POST /inquiries` (customer), `GET /inquiries/{id}` (internal notes hidden from customers),
+  `GET /inquiries/{id}/history`, `GET /inquiries/{id}/allowed-statuses`,
+  `POST /inquiries/{id}/claim` (staff), `/assign` (admin), `/status` (staff/admin), `/notes` (all)
+- `GET /staff` (active staff for assignment) · `GET /admin/inquiries/board` (Kanban, 50/column + counts)
+- Ref numbers `NM-<year>-<NNNN>` via advisory lock in `inquiry_service._next_ref_no`.
+- Rules live in `inquiry_service.TRANSITIONS`/`REOPEN`: staff act only on inquiries assigned to them
+  (acting on an unclaimed one claims it); cancel and reopen need a reason; every change writes
+  history + audit + customer notification + email (`inquiry_update.html`).
+
 - Files: type detected from content (PDF/PNG/JPEG only), max `MAX_UPLOAD_BYTES`; keys
   `applications/{app_id}/{uuid}.{ext}`. Local downloads use `/api/v1/files/{signed-token}` (relative URL).
 
