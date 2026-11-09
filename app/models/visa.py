@@ -55,8 +55,12 @@ class VisaApplication(UUIDPkMixin, TimestampMixin, Base):
     )
     submitted_at: Mapped[datetime | None]
 
+    visa_type: Mapped[VisaType] = relationship()
+    customer: Mapped["User"] = relationship(foreign_keys=[customer_id])  # noqa: F821
     documents: Mapped[list["ApplicationDocument"]] = relationship(
-        back_populates="application", cascade="all, delete-orphan"
+        back_populates="application",
+        cascade="all, delete-orphan",
+        order_by="ApplicationDocument.created_at",
     )
 
 

@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}Document update{% endblock %}
+{% block content %}
+<h2 style="margin:0 0 12px;font-size:20px;font-weight:600;color:#0B2A4A;">
+  {% if approved %}Document approved{% else %}Document needs attention{% endif %}
+</h2>
+<p style="margin:0 0 16px;">Hi {{ name }},</p>
+{% if approved %}
+<p style="margin:0 0 16px;">Good news — <strong>{{ file_name }}</strong> for your {{ visa_type }} application has been approved.</p>
+{% else %}
+<p style="margin:0 0 12px;"><strong>{{ file_name }}</strong> for your {{ visa_type }} application could not be accepted.</p>
+<p style="margin:0 0 16px;padding:12px 16px;background:#FEF2F2;border-radius:12px;color:#991B1B;">Reason: {{ reason }}</p>
+<p style="margin:0 0 16px;">Please open the app and upload a new copy.</p>
+{% endif %}
+<p style="margin:0;color:#6B7280;">You can follow every document's status in the Applications tab.</p>
+{% endblock %}
