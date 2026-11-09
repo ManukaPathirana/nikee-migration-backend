@@ -63,6 +63,19 @@ reusing an old refresh token revokes all sessions) · logout · forgot-password 
 accept-invite (staff, token from email) · change-password. `GET/PATCH /api/v1/me`.
 OTP codes: 6 digits, 10 min, max 5 wrong attempts; stored as HMAC hashes.
 
+## Customer core API
+- `GET /company` (public) · `PUT /admin/company` (admin, audited)
+- `GET /visa-types`, `GET /visa-types/{id|slug}` (public, active only, with requirements)
+- `GET/POST /applications`, `GET /applications/{id}` (detail has `checklist` + `other_documents`),
+  `POST /applications/{id}/submit|withdraw` (customer), `POST /applications/{id}/status` (staff/admin)
+- `POST /applications/{id}/documents` (multipart `file` + optional `requirement_id`),
+  `GET /documents/{id}/download-url`, `DELETE /documents/{id}` (pending only),
+  `POST /documents/{id}/review` (staff/admin; reason required to reject; notifies + emails customer)
+- Application status: draft → submitted (all mandatory docs uploaded) → in_review → approved
+  (all mandatory docs approved) | rejected; customer can withdraw while open.
+- Files: type detected from content (PDF/PNG/JPEG only), max `MAX_UPLOAD_BYTES`; keys
+  `applications/{app_id}/{uuid}.{ext}`. Local downloads use `/api/v1/files/{signed-token}` (relative URL).
+
 ## Rules
 - All routes under `/api/v1`. Every list endpoint is paginated (`page`, `page_size`, returns `items`, `total`).
 - Consistent error format: `{"error": {"code": str, "message": str, "details": any}}`.
