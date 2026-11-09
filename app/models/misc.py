@@ -2,13 +2,17 @@
 
 import uuid
 from datetime import datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import CheckConstraint, ForeignKey, Index, SmallInteger, String, Text, false, true
 from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base, TimestampMixin, UUIDPkMixin
+
+if TYPE_CHECKING:
+    from app.models.inquiry import Inquiry
+    from app.models.user import User
 
 DEFAULT_WEBSITE = "https://nikeemigration.com"
 
@@ -29,6 +33,10 @@ class Review(UUIDPkMixin, TimestampMixin, Base):
     is_visible: Mapped[bool] = mapped_column(default=True, server_default=true())
     admin_reply: Mapped[str | None] = mapped_column(Text)
     flagged: Mapped[bool] = mapped_column(default=False, server_default=false())
+
+    customer: Mapped["User"] = relationship(foreign_keys=[customer_id])
+    staff: Mapped["User | None"] = relationship(foreign_keys=[staff_id])
+    inquiry: Mapped["Inquiry"] = relationship()
 
 
 class Notification(UUIDPkMixin, TimestampMixin, Base):
