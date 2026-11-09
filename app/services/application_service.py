@@ -54,7 +54,7 @@ def _is_staff(user: User) -> bool:
     return user.role in (UserRole.STAFF, UserRole.ADMIN)
 
 
-def _base_query() -> Select[tuple[VisaApplication]]:
+def base_query() -> Select[tuple[VisaApplication]]:
     # populate_existing: always reload collections, even for objects already in the session.
     return (
         select(VisaApplication)
@@ -125,7 +125,7 @@ def to_detail(app: VisaApplication) -> ApplicationDetail:
 
 
 async def get_application(db: AsyncSession, app_id: uuid.UUID, user: User) -> VisaApplication:
-    app = await db.scalar(_base_query().where(VisaApplication.id == app_id))
+    app = await db.scalar(base_query().where(VisaApplication.id == app_id))
     if app is None or (not _is_staff(user) and app.customer_id != user.id):
         raise NotFound("Application not found")
     return app
@@ -139,7 +139,7 @@ async def list_applications(
     status: ApplicationStatus | None = None,
     assigned_to_me: bool = False,
 ) -> tuple[list[VisaApplication], int]:
-    query = _base_query()
+    query = base_query()
     if not _is_staff(user):
         query = query.where(VisaApplication.customer_id == user.id)
     elif assigned_to_me:
