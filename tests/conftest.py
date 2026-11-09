@@ -1,7 +1,10 @@
 import os
+import tempfile
 
 # Must be set before any app module is imported.
 os.environ["APP_ENV"] = "test"
+os.environ["STORAGE_BACKEND"] = "local"
+os.environ["LOCAL_STORAGE_DIR"] = tempfile.mkdtemp(prefix="nikee-test-storage-")
 os.environ["EMAIL_BACKEND"] = "memory"
 os.environ["JOBS_EAGER"] = "true"
 os.environ["REDIS_URL"] = ""
