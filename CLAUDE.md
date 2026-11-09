@@ -96,6 +96,23 @@ OTP codes: 6 digits, 10 min, max 5 wrong attempts; stored as HMAC hashes.
   conditional UPDATE on `reminder_24h_sent_at` / `reminder_1h_sent_at`, so it is sent exactly once.
 - Email times use `BUSINESS_TIMEZONE` (default Asia/Colombo; needs `tzdata` on Windows).
 
+## Notifications & push
+- `GET /notifications?unread=`, `GET /notifications/unread-count`, `POST /notifications/{id}/read`,
+  `POST /notifications/read-all`, `POST/DELETE /me/device-tokens`.
+- Create notifications only with `notification_service.notify(...)` (adds a row; caller commits).
+  When FCM is configured (`FCM_PROJECT_ID` + `FCM_CREDENTIALS_FILE`, `pip install google-auth`) a
+  SQLAlchemy `after_commit` hook queues a `send_push` job per notification; otherwise nothing is sent.
+  Notification `data` should carry `inquiry_id` / `meeting_id` / `application_id` so the app can open it.
+
+## Docker
+`docker compose up --build` (from backend/) runs db (host port 5433), redis, mailpit (:8025),
+api (:8000, runs migrations + seed via `docker/entrypoint.sh`) and the arq worker. Secrets come from
+`.env`. Keep `docker/entrypoint.sh` with LF line endings (`.gitattributes`).
+
+## Tests
+Tests use the pooled engine (all tests share one event loop) and cheap argon2 settings set in
+`tests/conftest.py`; the whole suite runs in ~30 s.
+
 ## Admin & reviews API
 - `GET /admin/dashboard` (counts, inquiries per week in UTC, recent audit activity)
 - Staff: `GET/POST /admin/staff`, `PATCH /admin/staff/{id}`, `POST /admin/staff/{id}/active`,
