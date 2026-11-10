@@ -53,6 +53,10 @@ alembic revision --autogenerate -m "..." # then review: shared PG enums need cre
 ```
 PostgreSQL binaries live at `D:\PostgreSQL-H7\pgsql\bin` on this machine (not on PATH).
 Databases: `nikee_migrations` (dev) and `nikee_migrations_test` (pytest), owned by role `nikee`.
+Dev now runs on Supabase (Postgres 17, session pooler, `?ssl=require` in `DATABASE_URL`); the local
+`nikee_migrations` line stays commented in `.env`. Tests always use the local test DB. Supabase's Data
+API is locked out by migration `c41d7e2a9b10` (revokes `anon`/`authenticated`, enables RLS); keep that
+in mind for new tables (default privileges are revoked too). Each query is ~115 ms from here to Tokyo.
 
 Seeded accounts (dev): super admin from `SEED_ADMIN_EMAIL`/`SEED_ADMIN_PASSWORD`; one team admin per
 team (`admin.<slug>@example.com`), `demo.staff@example.com` (Student team) and
