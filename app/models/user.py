@@ -33,13 +33,15 @@ class User(UUIDPkMixin, TimestampMixin, Base):
         ForeignKey("visa_types.id", ondelete="RESTRICT"), index=True
     )
 
-    team: Mapped["VisaType | None"] = relationship(lazy="selectin")  # noqa: F821
+    # Loaded in the same query (joined): every request loads the current user, and each extra
+    # query is a network round trip to the database.
+    team: Mapped["VisaType | None"] = relationship(lazy="joined")  # noqa: F821
     customer_profile: Mapped["CustomerProfile | None"] = relationship(
-        back_populates="user", lazy="selectin", cascade="all, delete-orphan"
+        back_populates="user", lazy="joined", cascade="all, delete-orphan"
     )
     staff_profile: Mapped["StaffProfile | None"] = relationship(
         back_populates="user",
-        lazy="selectin",
+        lazy="joined",
         cascade="all, delete-orphan",
         foreign_keys="StaffProfile.user_id",
     )

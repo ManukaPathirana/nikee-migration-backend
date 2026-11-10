@@ -4,7 +4,7 @@ import uuid
 
 from sqlalchemy import Select, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import joinedload
 
 from app.core.errors import BadRequest, Conflict, NotFound
 from app.core.permissions import require_team, team_scope
@@ -20,9 +20,9 @@ def _query() -> Select[tuple[Review]]:
     return (
         select(Review)
         .options(
-            selectinload(Review.customer),
-            selectinload(Review.staff),
-            selectinload(Review.inquiry),
+            joinedload(Review.customer),
+            joinedload(Review.staff),
+            joinedload(Review.inquiry),
         )
         .execution_options(populate_existing=True)
     )

@@ -6,7 +6,7 @@ from pathlib import PurePath
 from fastapi import UploadFile
 from sqlalchemy import Select, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import joinedload, selectinload
 
 from app.core.config import settings
 from app.core.errors import BadRequest, Forbidden, NotFound
@@ -61,9 +61,9 @@ def base_query() -> Select[tuple[VisaApplication]]:
     return (
         select(VisaApplication)
         .options(
-            selectinload(VisaApplication.visa_type).selectinload(VisaType.requirements),
+            joinedload(VisaApplication.visa_type).selectinload(VisaType.requirements),
             selectinload(VisaApplication.documents),
-            selectinload(VisaApplication.customer),
+            joinedload(VisaApplication.customer),
         )
         .execution_options(populate_existing=True)
     )

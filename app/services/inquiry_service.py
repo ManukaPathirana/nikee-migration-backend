@@ -5,7 +5,7 @@ from typing import Literal
 
 from sqlalchemy import Select, func, or_, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import joinedload, selectinload
 
 from app.core.errors import BadRequest, Conflict, Forbidden, NotFound
 from app.core.permissions import can_access_team, is_admin, is_internal, team_scope
@@ -59,15 +59,15 @@ def _is_staff(user: User) -> bool:
 def _query() -> Select[tuple[Inquiry]]:
     return (
         select(Inquiry)
-        .options(selectinload(Inquiry.customer), selectinload(Inquiry.assigned_staff))
+        .options(joinedload(Inquiry.customer), joinedload(Inquiry.assigned_staff))
         .execution_options(populate_existing=True)
     )
 
 
 def _detail_query() -> Select[tuple[Inquiry]]:
     return _query().options(
-        selectinload(Inquiry.history).selectinload(InquiryStatusHistory.actor),
-        selectinload(Inquiry.notes).selectinload(InquiryNote.author),
+        selectinload(Inquiry.history).joinedload(InquiryStatusHistory.actor),
+        selectinload(Inquiry.notes).joinedload(InquiryNote.author),
     )
 
 
@@ -137,14 +137,25 @@ async def list_inquiries(
 async def board(
     db: AsyncSession, team_id: uuid.UUID | None = None, per_column: int = 50
 ) -> dict[InquiryStatus, list[Inquiry]]:
-    """Kanban columns; `team_id=None` means all teams."""
-    columns: dict[InquiryStatus, list[Inquiry]] = {}
-    for status in InquiryStatus:
-        query = _query().where(Inquiry.status == status)
-        if team_id is not None:
-            query = query.where(Inquiry.visa_type_id == team_id)
-        rows = await db.scalars(query.order_by(Inquiry.updated_at.desc()).limit(per_column))
-        columns[status] = list(rows)
+    """Kanban columns (latest `per_column` per status) in one query; `team_id=None` = all teams."""
+    ranked = select(
+        Inquiry.id,
+        func.row_number()
+        .over(partition_by=Inquiry.status, order_by=Inquiry.updated_at.desc())
+        .label("rn"),
+    )
+    if team_id is not None:
+        ranked = ranked.where(Inquiry.visa_type_id == team_id)
+    ranked = ranked.subquery()
+    rows = await db.scalars(
+        _query()
+        .join(ranked, ranked.c.id == Inquiry.id)
+        .where(ranked.c.rn <= per_column)
+        .order_by(Inquiry.updated_at.desc())
+    )
+    columns: dict[InquiryStatus, list[Inquiry]] = {s: [] for s in InquiryStatus}
+    for inquiry in rows.unique():
+        columns[inquiry.status].append(inquiry)
     return columns
 
 

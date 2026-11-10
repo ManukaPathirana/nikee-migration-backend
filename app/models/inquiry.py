@@ -43,7 +43,7 @@ class Inquiry(UUIDPkMixin, TimestampMixin, Base):
 
     customer: Mapped["User"] = relationship(foreign_keys=[customer_id])
     assigned_staff: Mapped["User | None"] = relationship(foreign_keys=[assigned_staff_id])
-    visa_type: Mapped["VisaType"] = relationship(lazy="selectin")
+    visa_type: Mapped["VisaType"] = relationship(lazy="joined")
     history: Mapped[list["InquiryStatusHistory"]] = relationship(
         cascade="all, delete-orphan", order_by="InquiryStatusHistory.changed_at"
     )

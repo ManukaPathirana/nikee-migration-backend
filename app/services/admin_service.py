@@ -6,7 +6,7 @@ from datetime import timedelta
 
 from sqlalchemy import Select, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import joinedload, selectinload
 
 from app.core.errors import BadRequest, Conflict, Forbidden, NotFound
 from app.core.permissions import can_access_team, is_super_admin, team_scope
@@ -29,6 +29,7 @@ from app.models import (
     UserRole,
     VisaApplication,
     VisaType,
+    WorkSession,
 )
 from app.schemas.admin import (
     ActivityOut,
@@ -331,7 +332,7 @@ async def customer_detail(db: AsyncSession, user: User) -> CustomerDetail:
     inquiries = await db.scalars(
         select(Inquiry)
         .where(Inquiry.customer_id == user.id)
-        .options(selectinload(Inquiry.customer), selectinload(Inquiry.assigned_staff))
+        .options(joinedload(Inquiry.customer), joinedload(Inquiry.assigned_staff))
         .order_by(Inquiry.created_at.desc())
     )
     app_counts, inq_counts = await _customer_counts(db, [user.id])
@@ -429,14 +430,15 @@ async def dashboard(
     scope = team_scope(actor) or team_id
     team = await db.get(VisaType, scope) if scope else None
 
-    async def count(query) -> int:
-        return (await db.scalar(query)) or 0
-
     def inq(query):
         return query.where(Inquiry.visa_type_id == scope) if scope else query
 
     def app(query):
         return query.where(VisaApplication.visa_type_id == scope) if scope else query
+
+    def n(query):
+        """count(*) as a scalar subquery, so all numbers come back in one round trip."""
+        return query.with_only_columns(func.count()).scalar_subquery()
 
     if scope:
         # A team's customers: anyone with an inquiry or application in that team.
@@ -446,33 +448,75 @@ async def dashboard(
             .union(select(VisaApplication.customer_id).where(VisaApplication.visa_type_id == scope))
             .subquery()
         )
-        customers = (
-            select(func.count()).select_from(User).where(User.id.in_(select(team_customers.c.id)))
-        )
+        customers = select(User.id).where(User.id.in_(select(team_customers.c.id)))
     else:
-        customers = select(func.count()).select_from(User).where(User.role == UserRole.CUSTOMER)
-    customers_total = await count(customers)
-    customers_new = await count(customers.where(User.created_at >= now - timedelta(days=30)))
-
-    members_q = select(User).where(User.role.in_(TEAM_ROLES), User.is_active.is_(True))
+        customers = select(User.id).where(User.role == UserRole.CUSTOMER)
+    members = select(User.id).where(User.role.in_(TEAM_ROLES), User.is_active.is_(True))
     if scope:
-        members_q = members_q.where(User.team_id == scope)
-    members = list(await db.scalars(members_q))
-    staff_active = sum(1 for u in members if u.role == UserRole.STAFF)
-    working_now = len(await attendance_service.working_now_ids(db, [u.id for u in members]))
+        members = members.where(User.team_id == scope)
+    open_apps = [ApplicationStatus.SUBMITTED, ApplicationStatus.IN_REVIEW]
+    review_q = select(Review.id).join(Inquiry, Inquiry.id == Review.inquiry_id)
 
-    by_status = {s: 0 for s in InquiryStatus}
-    for status, n in (
-        await db.execute(inq(select(Inquiry.status, func.count())).group_by(Inquiry.status))
-    ).all():
-        by_status[status] = n
-    unassigned = await count(
-        inq(
-            select(func.count())
-            .select_from(Inquiry)
-            .where(Inquiry.status.in_(OPEN_INQUIRY), Inquiry.assigned_staff_id.is_(None))
+    figures = {
+        "customers_total": n(customers),
+        "customers_new": n(customers.where(User.created_at >= now - timedelta(days=30))),
+        "staff_active": n(members.where(User.role == UserRole.STAFF)),
+        "working_now": n(
+            select(WorkSession.id).where(
+                WorkSession.ended_at.is_(None), WorkSession.user_id.in_(members)
+            )
+        ),
+        "unassigned": n(
+            inq(
+                select(Inquiry.id).where(
+                    Inquiry.status.in_(OPEN_INQUIRY), Inquiry.assigned_staff_id.is_(None)
+                )
+            )
+        ),
+        "docs_pending": n(
+            app(
+                select(ApplicationDocument.id)
+                .join(VisaApplication, VisaApplication.id == ApplicationDocument.application_id)
+                .where(
+                    ApplicationDocument.status == DocumentStatus.PENDING,
+                    VisaApplication.status.in_(open_apps),
+                )
+            )
+        ),
+        "meetings_upcoming": n(
+            inq(
+                select(Meeting.id)
+                .join(MeetingSlot, MeetingSlot.id == Meeting.confirmed_slot_id)
+                .join(Inquiry, Inquiry.id == Meeting.inquiry_id)
+                .where(
+                    Meeting.status == MeetingStatus.CONFIRMED,
+                    MeetingSlot.start_at >= now,
+                    MeetingSlot.start_at < now + timedelta(days=7),
+                )
+            )
+        ),
+        "meetings_awaiting": n(
+            inq(
+                select(Meeting.id)
+                .join(Inquiry, Inquiry.id == Meeting.inquiry_id)
+                .where(Meeting.status == MeetingStatus.PROPOSED)
+            )
+        ),
+        "reviews_count": n(inq(review_q)),
+        "reviews_avg": inq(
+            select(func.avg(Review.rating)).join(Inquiry, Inquiry.id == Review.inquiry_id)
+        ).scalar_subquery(),
+        "reviews_flagged": n(inq(review_q.where(Review.flagged.is_(True)))),
+    }
+    for st in InquiryStatus:
+        figures[f"inq_{st.value}"] = n(inq(select(Inquiry.id).where(Inquiry.status == st)))
+    for st in ApplicationStatus:
+        figures[f"app_{st.value}"] = n(
+            app(select(VisaApplication.id).where(VisaApplication.status == st))
         )
-    )
+    f = (await db.execute(select(*[q.label(k) for k, q in figures.items()]))).one()._mapping
+    by_status = {st: f[f"inq_{st.value}"] for st in InquiryStatus}
+    apps_by_status = {st: f[f"app_{st.value}"] for st in ApplicationStatus}
 
     # Group in UTC (not the DB server's timezone) so weeks start on Monday 00:00 UTC.
     week = func.date_trunc("week", func.timezone("UTC", Inquiry.created_at))
@@ -496,67 +540,6 @@ async def dashboard(
         for i in range(7, -1, -1)
     ]
 
-    apps_by_status = {s: 0 for s in ApplicationStatus}
-    for status, n in (
-        await db.execute(
-            app(select(VisaApplication.status, func.count())).group_by(VisaApplication.status)
-        )
-    ).all():
-        apps_by_status[status] = n
-    docs_pending = await count(
-        app(
-            select(func.count())
-            .select_from(ApplicationDocument)
-            .join(VisaApplication, VisaApplication.id == ApplicationDocument.application_id)
-            .where(
-                ApplicationDocument.status == DocumentStatus.PENDING,
-                VisaApplication.status.in_(
-                    [ApplicationStatus.SUBMITTED, ApplicationStatus.IN_REVIEW]
-                ),
-            )
-        )
-    )
-
-    meetings_upcoming = await count(
-        inq(
-            select(func.count())
-            .select_from(Meeting)
-            .join(MeetingSlot, MeetingSlot.id == Meeting.confirmed_slot_id)
-            .join(Inquiry, Inquiry.id == Meeting.inquiry_id)
-            .where(
-                Meeting.status == MeetingStatus.CONFIRMED,
-                MeetingSlot.start_at >= now,
-                MeetingSlot.start_at < now + timedelta(days=7),
-            )
-        )
-    )
-    meetings_awaiting = await count(
-        inq(
-            select(func.count())
-            .select_from(Meeting)
-            .join(Inquiry, Inquiry.id == Meeting.inquiry_id)
-            .where(Meeting.status == MeetingStatus.PROPOSED)
-        )
-    )
-
-    reviews_count, reviews_avg = (
-        await db.execute(
-            inq(
-                select(func.count(Review.id), func.avg(Review.rating)).join(
-                    Inquiry, Inquiry.id == Review.inquiry_id
-                )
-            )
-        )
-    ).one()
-    reviews_flagged = await count(
-        inq(
-            select(func.count())
-            .select_from(Review)
-            .join(Inquiry, Inquiry.id == Review.inquiry_id)
-            .where(Review.flagged.is_(True))
-        )
-    )
-
     activity_q = select(AuditLog, User.full_name).outerjoin(User, User.id == AuditLog.actor_id)
     if scope:  # what the team's own people did
         activity_q = activity_q.where(User.team_id == scope)
@@ -567,21 +550,23 @@ async def dashboard(
     return DashboardOut(
         scope="all" if is_super_admin(actor) and team_id is None else "team",
         team=TeamBrief.model_validate(team) if team else None,
-        working_now=working_now,
+        working_now=f["working_now"],
         teams=await _team_stats(db) if is_super_admin(actor) and team_id is None else [],
-        customers_total=customers_total,
-        customers_new_30d=customers_new,
-        staff_active=staff_active,
+        customers_total=f["customers_total"],
+        customers_new_30d=f["customers_new"],
+        staff_active=f["staff_active"],
         inquiries_by_status=by_status,
-        inquiries_unassigned=unassigned,
+        inquiries_unassigned=f["unassigned"],
         inquiries_per_week=per_week,
         applications_by_status=apps_by_status,
-        documents_pending=docs_pending,
-        meetings_upcoming_7d=meetings_upcoming,
-        meetings_awaiting_customer=meetings_awaiting,
-        reviews_count=reviews_count or 0,
-        reviews_average=round(float(reviews_avg), 2) if reviews_avg is not None else None,
-        reviews_flagged=reviews_flagged,
+        documents_pending=f["docs_pending"],
+        meetings_upcoming_7d=f["meetings_upcoming"],
+        meetings_awaiting_customer=f["meetings_awaiting"],
+        reviews_count=f["reviews_count"],
+        reviews_average=(
+            round(float(f["reviews_avg"]), 2) if f["reviews_avg"] is not None else None
+        ),
+        reviews_flagged=f["reviews_flagged"],
         recent_activity=[
             ActivityOut(
                 id=log.id,

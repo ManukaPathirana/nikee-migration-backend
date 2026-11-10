@@ -7,7 +7,7 @@ from zoneinfo import ZoneInfo
 
 from sqlalchemy import Select, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import joinedload, selectinload
 
 from app.core.config import settings
 from app.core.errors import BadRequest, Conflict, Forbidden, NotFound
@@ -51,10 +51,10 @@ def _query() -> Select[tuple[Meeting]]:
         select(Meeting)
         .options(
             selectinload(Meeting.slots),
-            selectinload(Meeting.confirmed_slot),
-            selectinload(Meeting.inquiry),
-            selectinload(Meeting.staff),
-            selectinload(Meeting.customer),
+            joinedload(Meeting.confirmed_slot),
+            joinedload(Meeting.inquiry),
+            joinedload(Meeting.staff),
+            joinedload(Meeting.customer),
         )
         .execution_options(populate_existing=True)
     )
@@ -167,7 +167,7 @@ async def create_meeting(
     staff_note: str | None,
 ) -> Meeting:
     inquiry = await db.scalar(
-        select(Inquiry).where(Inquiry.id == inquiry_id).options(selectinload(Inquiry.customer))
+        select(Inquiry).where(Inquiry.id == inquiry_id).options(joinedload(Inquiry.customer))
     )
     if inquiry is None or not can_access_team(staff, inquiry.visa_type_id):
         raise NotFound("Inquiry not found")

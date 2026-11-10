@@ -182,143 +182,89 @@ async def staff_report(
     now = utcnow()
     users = await _team_members(db, actor, team_id, user_id)
     ids = [u.id for u in users]
-    sessions = await _sessions(db, ids, start, end)
+    first_login, last_login, last_logout, open_inquiries = {}, {}, {}, {}
+    status_changes, completed, actions, docs, meetings = {}, {}, {}, {}, {}
     by_user: dict[uuid.UUID, list[WorkSession]] = {}
-    for s in sessions:
-        by_user.setdefault(s.user_id, []).append(s)
-    open_now = (
-        {
-            s.user_id: s.started_at
-            for s in await db.scalars(
-                select(WorkSession).where(
-                    WorkSession.user_id.in_(ids), WorkSession.ended_at.is_(None)
-                )
+    open_now: dict[uuid.UUID, datetime] = {}
+    if ids:
+        # Shifts in the period plus any still running, in one query.
+        shifts = await db.scalars(
+            select(WorkSession)
+            .where(
+                WorkSession.user_id.in_(ids),
+                or_(
+                    WorkSession.ended_at.is_(None),
+                    and_(WorkSession.started_at < end, WorkSession.ended_at > start),
+                ),
             )
-        }
-        if ids
-        else {}
-    )
+            .order_by(WorkSession.started_at)
+        )
+        for sh in shifts:
+            if sh.ended_at is None:
+                open_now[sh.user_id] = sh.started_at
+            if sh.started_at < end and (sh.ended_at is None or sh.ended_at > start):
+                by_user.setdefault(sh.user_id, []).append(sh)
 
-    def grouped(rows) -> dict:
-        return {k: v for k, v in rows.all()}
+        login = ActivityEvent.kind == "login"
+        for uid, first, last, out in await db.execute(
+            select(
+                ActivityEvent.user_id,
+                func.min(ActivityEvent.created_at).filter(login),
+                func.max(ActivityEvent.created_at).filter(login),
+                func.max(ActivityEvent.created_at).filter(ActivityEvent.kind == "logout"),
+            )
+            .where(
+                ActivityEvent.user_id.in_(ids),
+                ActivityEvent.created_at >= start,
+                ActivityEvent.created_at < end,
+            )
+            .group_by(ActivityEvent.user_id)
+        ):
+            first_login[uid], last_login[uid], last_logout[uid] = first, last, out
 
-    in_period = and_(ActivityEvent.created_at >= start, ActivityEvent.created_at < end)
-    first_login = (
-        grouped(
-            await db.execute(
-                select(ActivityEvent.user_id, func.min(ActivityEvent.created_at))
-                .where(ActivityEvent.user_id.in_(ids), ActivityEvent.kind == "login", in_period)
-                .group_by(ActivityEvent.user_id)
-            )
-        )
-        if ids
-        else {}
-    )
-    last_login = (
-        grouped(
-            await db.execute(
-                select(ActivityEvent.user_id, func.max(ActivityEvent.created_at))
-                .where(ActivityEvent.user_id.in_(ids), ActivityEvent.kind == "login", in_period)
-                .group_by(ActivityEvent.user_id)
-            )
-        )
-        if ids
-        else {}
-    )
-    last_logout = (
-        grouped(
-            await db.execute(
-                select(ActivityEvent.user_id, func.max(ActivityEvent.created_at))
-                .where(ActivityEvent.user_id.in_(ids), ActivityEvent.kind == "logout", in_period)
-                .group_by(ActivityEvent.user_id)
-            )
-        )
-        if ids
-        else {}
-    )
-    open_inquiries = (
-        grouped(
-            await db.execute(
-                select(Inquiry.assigned_staff_id, func.count())
-                .where(
-                    Inquiry.assigned_staff_id.in_(ids),
-                    Inquiry.status.in_([InquiryStatus.SCHEDULED, InquiryStatus.PROCESSING]),
+        open_inquiries = dict(
+            (
+                await db.execute(
+                    select(Inquiry.assigned_staff_id, func.count())
+                    .where(
+                        Inquiry.assigned_staff_id.in_(ids),
+                        Inquiry.status.in_([InquiryStatus.SCHEDULED, InquiryStatus.PROCESSING]),
+                    )
+                    .group_by(Inquiry.assigned_staff_id)
                 )
-                .group_by(Inquiry.assigned_staff_id)
-            )
+            ).all()
         )
-        if ids
-        else {}
-    )
-    hist_period = and_(
-        InquiryStatusHistory.changed_at >= start, InquiryStatusHistory.changed_at < end
-    )
-    status_changes = (
-        grouped(
-            await db.execute(
-                select(InquiryStatusHistory.changed_by, func.count())
-                .where(
-                    InquiryStatusHistory.changed_by.in_(ids),
-                    InquiryStatusHistory.from_status.is_not(None),
-                    hist_period,
-                )
-                .group_by(InquiryStatusHistory.changed_by)
+
+        for uid, changes, done in await db.execute(
+            select(
+                InquiryStatusHistory.changed_by,
+                func.count().filter(InquiryStatusHistory.from_status.is_not(None)),
+                func.count().filter(InquiryStatusHistory.to_status == InquiryStatus.COMPLETED),
             )
-        )
-        if ids
-        else {}
-    )
-    completed = (
-        grouped(
-            await db.execute(
-                select(InquiryStatusHistory.changed_by, func.count())
-                .where(
-                    InquiryStatusHistory.changed_by.in_(ids),
-                    InquiryStatusHistory.to_status == InquiryStatus.COMPLETED,
-                    hist_period,
-                )
-                .group_by(InquiryStatusHistory.changed_by)
+            .where(
+                InquiryStatusHistory.changed_by.in_(ids),
+                InquiryStatusHistory.changed_at >= start,
+                InquiryStatusHistory.changed_at < end,
             )
-        )
-        if ids
-        else {}
-    )
-    audit_period = and_(AuditLog.created_at >= start, AuditLog.created_at < end)
-    actions = (
-        grouped(
-            await db.execute(
-                select(AuditLog.actor_id, func.count())
-                .where(AuditLog.actor_id.in_(ids), audit_period)
-                .group_by(AuditLog.actor_id)
+            .group_by(InquiryStatusHistory.changed_by)
+        ):
+            status_changes[uid], completed[uid] = changes, done
+
+        for uid, total, doc, meet in await db.execute(
+            select(
+                AuditLog.actor_id,
+                func.count(),
+                func.count().filter(AuditLog.action.like("document.%")),
+                func.count().filter(AuditLog.action == "meeting.complete"),
             )
-        )
-        if ids
-        else {}
-    )
-    docs = (
-        grouped(
-            await db.execute(
-                select(AuditLog.actor_id, func.count())
-                .where(AuditLog.actor_id.in_(ids), AuditLog.action.like("document.%"), audit_period)
-                .group_by(AuditLog.actor_id)
+            .where(
+                AuditLog.actor_id.in_(ids),
+                AuditLog.created_at >= start,
+                AuditLog.created_at < end,
             )
-        )
-        if ids
-        else {}
-    )
-    meetings = (
-        grouped(
-            await db.execute(
-                select(AuditLog.actor_id, func.count())
-                .where(
-                    AuditLog.actor_id.in_(ids), AuditLog.action == "meeting.complete", audit_period
-                )
-                .group_by(AuditLog.actor_id)
-            )
-        )
-        if ids
-        else {}
-    )
+            .group_by(AuditLog.actor_id)
+        ):
+            actions[uid], docs[uid], meetings[uid] = total, doc, meet
 
     rows = [
         StaffReportRow(
