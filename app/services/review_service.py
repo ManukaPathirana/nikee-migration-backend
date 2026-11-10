@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.errors import BadRequest, Conflict, NotFound
+from app.core.permissions import require_team, team_scope
 from app.models import Inquiry, InquiryStatus, Review, User, UserRole
 from app.schemas.common import PageParams
 from app.schemas.review import PublicReview, ReviewSummary
@@ -75,12 +76,18 @@ async def list_reviews(
     visible: bool | None = None,
     flagged: bool | None = None,
     staff_id: uuid.UUID | None = None,
+    team_id: uuid.UUID | None = None,
 ) -> tuple[list[Review], int]:
     query = _query()
     if user.role == UserRole.CUSTOMER:
         query = query.where(Review.customer_id == user.id)
     elif user.role == UserRole.STAFF:
         query = query.where(Review.staff_id == user.id, Review.is_visible.is_(True))
+    scope = team_scope(user) or team_id if user.role != UserRole.CUSTOMER else None
+    if scope is not None:  # team admin: their team's reviews; super admin: optional filter
+        query = query.join(Inquiry, Inquiry.id == Review.inquiry_id).where(
+            Inquiry.visa_type_id == scope
+        )
     if inquiry_id is not None:
         query = query.where(Review.inquiry_id == inquiry_id)
     if rating is not None:
@@ -99,6 +106,7 @@ async def list_reviews(
 
 
 async def moderate(db: AsyncSession, admin: User, review: Review, changes: dict) -> Review:
+    require_team(admin, review.inquiry.visa_type_id)  # team admins: own team only
     reply_added = False
     if "is_visible" in changes and changes["is_visible"] is not None:
         review.is_visible = changes["is_visible"]

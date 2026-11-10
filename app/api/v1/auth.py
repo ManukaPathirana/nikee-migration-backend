@@ -67,8 +67,10 @@ async def refresh(request: Request, data: RefreshIn, db: DbSession) -> TokenPair
 
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
-async def logout(data: RefreshIn, db: DbSession) -> Response:
-    await auth_service.logout(db, data.refresh_token)
+async def logout(request: Request, data: RefreshIn, db: DbSession) -> Response:
+    """Revokes the refresh token. For staff/admins this also logs the sign-out and ends a
+    running work shift."""
+    await auth_service.logout(db, data.refresh_token, _device(request))
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 

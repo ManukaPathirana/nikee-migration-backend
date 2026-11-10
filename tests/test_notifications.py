@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import DeviceToken, UserRole
 from app.services import notification_service, push_service
-from tests.conftest import auth_header, create_user, login
+from tests.conftest import TEAM, auth_header, create_user, login
 
 
 @pytest.fixture
@@ -24,7 +24,11 @@ async def _inquiry_with_status_change(client: AsyncClient, h: dict) -> str:
     inquiry = (
         await client.post(
             "/api/v1/inquiries",
-            json={"subject": "Question", "description": "A question about visas."},
+            json={
+                "visa_type_id": TEAM,
+                "subject": "Question",
+                "description": "A question about visas.",
+            },
             headers=h["cust"],
         )
     ).json()

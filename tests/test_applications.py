@@ -29,8 +29,8 @@ async def customer(client: AsyncClient, db: AsyncSession) -> dict:
 
 
 @pytest.fixture
-async def staff(client: AsyncClient, db: AsyncSession) -> dict:
-    await create_user(db, email="staff@example.com", role=UserRole.STAFF)
+async def staff(client: AsyncClient, db: AsyncSession, visa: VisaType) -> dict:
+    await create_user(db, email="staff@example.com", role=UserRole.STAFF, team_id=visa.id)
     return auth_header(await login(client, "staff@example.com"))
 
 
@@ -73,7 +73,7 @@ async def test_public_company_and_visa_types(client: AsyncClient, db: AsyncSessi
 
 async def test_admin_updates_company_others_cannot(client: AsyncClient, db: AsyncSession, customer):
     db.add(CompanyInfo(name="Nikee Migrations"))
-    await create_user(db, email="admin@example.com", role=UserRole.ADMIN)
+    await create_user(db, email="admin@example.com", role=UserRole.SUPER_ADMIN)
     admin = auth_header(await login(client, "admin@example.com"))
 
     body = {"phone": "+94 77 123 4567", "whatsapp": "+94771234567", "email": "info@example.com"}

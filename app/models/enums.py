@@ -2,8 +2,9 @@ from enum import StrEnum
 
 
 class UserRole(StrEnum):
-    ADMIN = "admin"
-    STAFF = "staff"
+    SUPER_ADMIN = "super_admin"  # all teams + oversight
+    ADMIN = "admin"  # team admin: one team (visa type)
+    STAFF = "staff"  # team member: one team (visa type)
     CUSTOMER = "customer"
 
 

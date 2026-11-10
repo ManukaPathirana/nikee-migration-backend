@@ -11,6 +11,7 @@ from sqlalchemy.orm import selectinload
 
 from app.core.config import settings
 from app.core.errors import BadRequest, Conflict, Forbidden, NotFound
+from app.core.permissions import can_access_team, is_admin
 from app.core.security import utcnow
 from app.models import (
     Inquiry,
@@ -59,8 +60,13 @@ def _query() -> Select[tuple[Meeting]]:
     )
 
 
+def _admin_of(meeting: Meeting, user: User) -> bool:
+    """Super admin, or the team admin of the meeting's inquiry."""
+    return is_admin(user) and can_access_team(user, meeting.inquiry.visa_type_id)
+
+
 def _can_manage(meeting: Meeting, user: User) -> bool:
-    return user.role == UserRole.ADMIN or meeting.staff_id == user.id
+    return _admin_of(meeting, user) or meeting.staff_id == user.id
 
 
 def _validate_slots(slots: list[SlotIn]) -> None:
@@ -103,7 +109,7 @@ async def get_meeting(db: AsyncSession, meeting_id: uuid.UUID, user: User) -> Me
     if meeting is None:
         raise NotFound("Meeting not found")
     visible = (
-        user.role == UserRole.ADMIN or meeting.staff_id == user.id or meeting.customer_id == user.id
+        _admin_of(meeting, user) or meeting.staff_id == user.id or meeting.customer_id == user.id
     )
     if not visible:
         raise NotFound("Meeting not found")
@@ -125,6 +131,10 @@ async def list_meetings(
         query = query.where(Meeting.customer_id == user.id)
     elif user.role == UserRole.STAFF:
         query = query.where(Meeting.staff_id == user.id)
+    elif user.role == UserRole.ADMIN:  # team admin: meetings of their team's inquiries
+        query = query.join(Inquiry, Inquiry.id == Meeting.inquiry_id).where(
+            Inquiry.visa_type_id == user.team_id
+        )
     if status is not None:
         query = query.where(Meeting.status == status)
     if inquiry_id is not None:
@@ -159,7 +169,7 @@ async def create_meeting(
     inquiry = await db.scalar(
         select(Inquiry).where(Inquiry.id == inquiry_id).options(selectinload(Inquiry.customer))
     )
-    if inquiry is None:
+    if inquiry is None or not can_access_team(staff, inquiry.visa_type_id):
         raise NotFound("Inquiry not found")
     if inquiry.status in (InquiryStatus.COMPLETED, InquiryStatus.CANCELLED):
         raise BadRequest("This inquiry is closed", code="inquiry_closed")

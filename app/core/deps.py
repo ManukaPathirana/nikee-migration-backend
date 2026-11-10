@@ -55,7 +55,13 @@ def require_role(*roles: UserRole) -> Callable[..., Coroutine[Any, Any, User]]:
     return _dependency
 
 
-AdminUser = Annotated[User, Depends(require_role(UserRole.ADMIN))]
-StaffOrAdmin = Annotated[User, Depends(require_role(UserRole.STAFF, UserRole.ADMIN))]
+SuperAdminUser = Annotated[User, Depends(require_role(UserRole.SUPER_ADMIN))]
+# Team admin or super admin (services narrow team admins to their own team).
+AdminUser = Annotated[User, Depends(require_role(UserRole.ADMIN, UserRole.SUPER_ADMIN))]
+StaffOrAdmin = Annotated[
+    User, Depends(require_role(UserRole.STAFF, UserRole.ADMIN, UserRole.SUPER_ADMIN))
+]
 StaffUser = Annotated[User, Depends(require_role(UserRole.STAFF))]
+# Staff + admins: anyone who records work hours.
+InternalUser = StaffOrAdmin
 CustomerUser = Annotated[User, Depends(require_role(UserRole.CUSTOMER))]

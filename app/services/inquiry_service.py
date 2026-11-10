@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.errors import BadRequest, Conflict, Forbidden, NotFound
+from app.core.permissions import can_access_team, is_admin, is_internal, team_scope
 from app.core.security import utcnow
 from app.models import (
     Inquiry,
@@ -19,6 +20,7 @@ from app.models import (
     User,
     UserRole,
     VisaApplication,
+    VisaType,
 )
 from app.schemas.common import PageParams
 from app.schemas.inquiry import InquiryDetail
@@ -45,12 +47,13 @@ Scope = Literal["all", "queue", "mine"]
 
 def allowed_transitions(inquiry: Inquiry, user: User) -> set[InquiryStatus]:
     if inquiry.status in FINAL:
-        return REOPEN[inquiry.status] if user.role == UserRole.ADMIN else set()
+        return REOPEN[inquiry.status] if is_admin(user) else set()
     return TRANSITIONS.get(inquiry.status, set())
 
 
 def _is_staff(user: User) -> bool:
-    return user.role in (UserRole.STAFF, UserRole.ADMIN)
+    """Staff, team admin or super admin."""
+    return is_internal(user)
 
 
 def _query() -> Select[tuple[Inquiry]]:
@@ -82,6 +85,8 @@ async def get_inquiry(db: AsyncSession, inquiry_id: uuid.UUID, user: User) -> In
     inquiry = await db.scalar(_detail_query().where(Inquiry.id == inquiry_id))
     if inquiry is None or (not _is_staff(user) and inquiry.customer_id != user.id):
         raise NotFound("Inquiry not found")
+    if _is_staff(user) and not can_access_team(user, inquiry.visa_type_id):
+        raise NotFound("Inquiry not found")  # another team's inquiry
     return inquiry
 
 
@@ -94,8 +99,14 @@ async def list_inquiries(
     status: InquiryStatus | None = None,
     assigned_staff_id: uuid.UUID | None = None,
     search: str | None = None,
+    team_id: uuid.UUID | None = None,
 ) -> tuple[list[Inquiry], int]:
     query = _query()
+    if _is_staff(user):
+        # Team members see their own team; the super admin may filter by team.
+        scope_team = team_scope(user) or team_id
+        if scope_team is not None:
+            query = query.where(Inquiry.visa_type_id == scope_team)
     if not _is_staff(user):
         query = query.where(Inquiry.customer_id == user.id)
     elif scope == "queue":
@@ -123,21 +134,27 @@ async def list_inquiries(
     return list(rows), total or 0
 
 
-async def board(db: AsyncSession, per_column: int = 50) -> dict[InquiryStatus, list[Inquiry]]:
+async def board(
+    db: AsyncSession, team_id: uuid.UUID | None = None, per_column: int = 50
+) -> dict[InquiryStatus, list[Inquiry]]:
+    """Kanban columns; `team_id=None` means all teams."""
     columns: dict[InquiryStatus, list[Inquiry]] = {}
     for status in InquiryStatus:
-        rows = await db.scalars(
-            _query()
-            .where(Inquiry.status == status)
-            .order_by(Inquiry.updated_at.desc())
-            .limit(per_column)
-        )
+        query = _query().where(Inquiry.status == status)
+        if team_id is not None:
+            query = query.where(Inquiry.visa_type_id == team_id)
+        rows = await db.scalars(query.order_by(Inquiry.updated_at.desc()).limit(per_column))
         columns[status] = list(rows)
     return columns
 
 
-async def board_counts(db: AsyncSession) -> dict[InquiryStatus, int]:
-    rows = await db.execute(select(Inquiry.status, func.count()).group_by(Inquiry.status))
+async def board_counts(
+    db: AsyncSession, team_id: uuid.UUID | None = None
+) -> dict[InquiryStatus, int]:
+    query = select(Inquiry.status, func.count()).group_by(Inquiry.status)
+    if team_id is not None:
+        query = query.where(Inquiry.visa_type_id == team_id)
+    rows = await db.execute(query)
     counts = {s: 0 for s in InquiryStatus}
     counts.update({status: n for status, n in rows.all()})
     return counts
@@ -169,14 +186,23 @@ async def create_inquiry(
     description: str,
     preferred_contact_time: str | None,
     application_id: uuid.UUID | None,
+    visa_type_id: uuid.UUID,
 ) -> Inquiry:
+    visa = await db.get(VisaType, visa_type_id)
+    if visa is None or not visa.is_active:
+        raise BadRequest("Choose a visa type", code="invalid_visa_type")
     if application_id is not None:
         app = await db.get(VisaApplication, application_id)
         if app is None or app.customer_id != customer.id:
             raise BadRequest("Application not found", code="invalid_application")
+        if app.visa_type_id != visa.id:
+            raise BadRequest(
+                "The linked application is for a different visa type", code="visa_type_mismatch"
+            )
     inquiry = Inquiry(
         ref_no=await _next_ref_no(db),
         customer_id=customer.id,
+        visa_type_id=visa.id,
         application_id=application_id,
         subject=subject.strip(),
         category=category,
@@ -195,7 +221,39 @@ async def create_inquiry(
             reason="Inquiry placed",
         )
     )
+    # New inquiries go to the team admins of that visa type first; they assign a team member.
+    team_admins = list(
+        await db.scalars(
+            select(User).where(
+                User.role == UserRole.ADMIN, User.team_id == visa.id, User.is_active.is_(True)
+            )
+        )
+    )
+    for admin in team_admins:
+        notify(
+            db,
+            user_id=admin.id,
+            type="inquiry_new",
+            title=f"New {visa.name} inquiry {inquiry.ref_no}",
+            body=f"{customer.full_name}: {inquiry.subject}",
+            data={"inquiry_id": str(inquiry.id)},
+        )
     await db.commit()
+    for admin in team_admins:
+        await job_queue.send_email(
+            to=admin.email,
+            subject=f"New {visa.name} inquiry {inquiry.ref_no}",
+            template="inquiry_update.html",
+            context={
+                "name": admin.full_name,
+                "heading": f"A new {visa.name} inquiry is waiting",
+                "message": f"{customer.full_name} sent a new inquiry. Open the Inquiry Board "
+                "to assign it to someone in your team.",
+                "ref_no": inquiry.ref_no,
+                "subject": inquiry.subject,
+                "status": S.SCHEDULED.value,
+            },
+        )
     await job_queue.send_email(
         to=customer.email,
         subject=f"We've received your inquiry {inquiry.ref_no}",
@@ -233,6 +291,8 @@ async def assign(db: AsyncSession, inquiry: Inquiry, admin: User, staff_id: uuid
     staff = await db.get(User, staff_id)
     if staff is None or staff.role != UserRole.STAFF or not staff.is_active:
         raise BadRequest("Choose an active staff member", code="invalid_staff")
+    if staff.team_id != inquiry.visa_type_id:
+        raise BadRequest("Choose a staff member from this inquiry's team", code="wrong_team")
     previous = inquiry.assigned_staff_id
     inquiry.assigned_staff_id = staff.id
     # Open meetings follow the inquiry to the new consultant so they can run them.
@@ -291,7 +351,7 @@ async def change_status(
 ) -> None:
     reason = (reason or "").strip() or None
     if new_status not in allowed_transitions(inquiry, actor):
-        if inquiry.status in FINAL and actor.role != UserRole.ADMIN:
+        if inquiry.status in FINAL and not is_admin(actor):
             raise Forbidden(
                 f"This inquiry is {inquiry.status.value}. Only an admin can reopen it.",
                 code="inquiry_closed",

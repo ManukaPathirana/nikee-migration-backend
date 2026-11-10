@@ -1,7 +1,7 @@
 import uuid
 from datetime import date, datetime
 
-from sqlalchemy import ForeignKey, Index, String, Text, false, text, true
+from sqlalchemy import CheckConstraint, ForeignKey, Index, String, Text, false, text, true
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base, TimestampMixin, UUIDPkMixin, pg_enum
@@ -10,7 +10,13 @@ from app.models.enums import UserRole, VerificationPurpose
 
 class User(UUIDPkMixin, TimestampMixin, Base):
     __tablename__ = "users"
-    __table_args__ = (Index("uq_users_email_lower", text("lower(email)"), unique=True),)
+    __table_args__ = (
+        Index("uq_users_email_lower", text("lower(email)"), unique=True),
+        # Team admins and staff always belong to exactly one team (visa type).
+        CheckConstraint(
+            "role NOT IN ('staff', 'admin') OR team_id IS NOT NULL", name="team_member_has_team"
+        ),
+    )
 
     email: Mapped[str] = mapped_column(String(320), unique=True)
     # Null for invited staff until they accept the invite and set a password.
@@ -22,7 +28,12 @@ class User(UUIDPkMixin, TimestampMixin, Base):
     is_verified: Mapped[bool] = mapped_column(default=False, server_default=false())
     is_active: Mapped[bool] = mapped_column(default=True, server_default=true())
     last_login_at: Mapped[datetime | None]
+    # The team (visa type) a team admin or staff member belongs to; null for others.
+    team_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("visa_types.id", ondelete="RESTRICT"), index=True
+    )
 
+    team: Mapped["VisaType | None"] = relationship(lazy="selectin")  # noqa: F821
     customer_profile: Mapped["CustomerProfile | None"] = relationship(
         back_populates="user", lazy="selectin", cascade="all, delete-orphan"
     )

@@ -1,6 +1,7 @@
 """Import every model here so Alembic and relationships see the full metadata."""
 
 from app.db.base import Base
+from app.models.attendance import ActivityEvent, WorkSession
 from app.models.enums import (
     ApplicationStatus,
     DocumentStatus,
@@ -29,6 +30,7 @@ from app.models.visa import (
 )
 
 __all__ = [
+    "ActivityEvent",
     "ApplicationDocument",
     "ApplicationStatus",
     "AuditLog",
@@ -56,4 +58,5 @@ __all__ = [
     "VerificationPurpose",
     "VisaApplication",
     "VisaType",
+    "WorkSession",
 ]

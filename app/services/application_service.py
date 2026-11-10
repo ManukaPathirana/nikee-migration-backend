@@ -10,6 +10,7 @@ from sqlalchemy.orm import selectinload
 
 from app.core.config import settings
 from app.core.errors import BadRequest, Forbidden, NotFound
+from app.core.permissions import can_access_team, is_internal, team_scope
 from app.core.security import utcnow
 from app.models import (
     ApplicationDocument,
@@ -51,7 +52,8 @@ WITHDRAWABLE = EDITABLE_STATUSES
 
 
 def _is_staff(user: User) -> bool:
-    return user.role in (UserRole.STAFF, UserRole.ADMIN)
+    """Staff, team admin or super admin."""
+    return is_internal(user)
 
 
 def base_query() -> Select[tuple[VisaApplication]]:
@@ -128,6 +130,8 @@ async def get_application(db: AsyncSession, app_id: uuid.UUID, user: User) -> Vi
     app = await db.scalar(base_query().where(VisaApplication.id == app_id))
     if app is None or (not _is_staff(user) and app.customer_id != user.id):
         raise NotFound("Application not found")
+    if _is_staff(user) and not can_access_team(user, app.visa_type_id):
+        raise NotFound("Application not found")  # another team's application
     return app
 
 
@@ -138,8 +142,13 @@ async def list_applications(
     *,
     status: ApplicationStatus | None = None,
     assigned_to_me: bool = False,
+    team_id: uuid.UUID | None = None,
 ) -> tuple[list[VisaApplication], int]:
     query = base_query()
+    if _is_staff(user):
+        scope_team = team_scope(user) or team_id
+        if scope_team is not None:
+            query = query.where(VisaApplication.visa_type_id == scope_team)
     if not _is_staff(user):
         query = query.where(VisaApplication.customer_id == user.id)
     elif assigned_to_me:

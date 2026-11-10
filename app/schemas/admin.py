@@ -1,16 +1,18 @@
 import uuid
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, EmailStr, Field
 
-from app.models.enums import ApplicationStatus, InquiryStatus
+from app.models.enums import ApplicationStatus, InquiryStatus, UserRole
 from app.schemas.common import ORMModel
-from app.schemas.inquiry import InquiryOut
+from app.schemas.inquiry import InquiryOut, TeamBrief
 from app.schemas.user import CustomerProfileOut
 from app.schemas.visa import ApplicationSummary, RequirementOut
 
-# ---------------------------------------------------------------- staff
+# ------------------------------------------------------- team members (staff + team admins)
+
+TeamRole = Literal[UserRole.STAFF, UserRole.ADMIN]
 
 
 class StaffCreate(BaseModel):
@@ -19,6 +21,10 @@ class StaffCreate(BaseModel):
     phone: str | None = Field(default=None, max_length=40)
     designation: str | None = Field(default=None, max_length=120)
     specialization: str | None = Field(default=None, max_length=200)
+    # Super admin only: 'admin' creates a team admin. Team admins always create staff.
+    role: TeamRole = UserRole.STAFF
+    # Super admin must choose; team admins always add to their own team.
+    team_id: uuid.UUID | None = None
 
 
 class StaffUpdate(BaseModel):
@@ -26,6 +32,7 @@ class StaffUpdate(BaseModel):
     phone: str | None = Field(default=None, max_length=40)
     designation: str | None = Field(default=None, max_length=120)
     specialization: str | None = Field(default=None, max_length=200)
+    team_id: uuid.UUID | None = None  # super admin only
 
 
 class StaffOut(BaseModel):
@@ -33,11 +40,14 @@ class StaffOut(BaseModel):
     email: str
     full_name: str
     phone: str | None
+    role: UserRole
+    team: TeamBrief | None
     designation: str | None
     specialization: str | None
     is_active: bool
     invite_pending: bool  # hasn't set a password yet
     open_inquiries: int
+    working_now: bool  # has an open Start work shift
     last_login_at: datetime | None
     created_at: datetime
 
@@ -82,7 +92,24 @@ class ActivityOut(BaseModel):
     created_at: datetime
 
 
+class TeamStat(BaseModel):
+    """One row of the super admin's per-team overview."""
+
+    team: TeamBrief
+    inquiries_by_status: dict[InquiryStatus, int]
+    inquiries_unassigned: int
+    applications_open: int
+    documents_pending: int
+    staff_active: int
+    working_now: int
+    admins: list[str]  # team admin names
+
+
 class DashboardOut(BaseModel):
+    scope: Literal["all", "team"]
+    team: TeamBrief | None  # set for team admins
+    working_now: int  # staff/admins currently on the clock
+    teams: list[TeamStat]  # super admin only; empty for team admins
     customers_total: int
     customers_new_30d: int
     staff_active: int

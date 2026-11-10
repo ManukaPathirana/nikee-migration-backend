@@ -179,7 +179,7 @@ async def test_forgot_and_reset_password(client: AsyncClient, db: AsyncSession):
 
 
 async def test_staff_accepts_invite(client: AsyncClient, db: AsyncSession):
-    admin = await create_user(db, email="boss@example.com", role=UserRole.ADMIN)
+    admin = await create_user(db, email="boss@example.com", role=UserRole.SUPER_ADMIN)
     staff = await create_user(
         db, email="staff@example.com", role=UserRole.STAFF, password=None, verified=False
     )

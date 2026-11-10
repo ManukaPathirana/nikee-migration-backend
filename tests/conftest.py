@@ -1,5 +1,6 @@
 import os
 import tempfile
+import uuid
 
 # Must be set before any app module is imported.
 os.environ["APP_ENV"] = "test"
@@ -28,10 +29,20 @@ security._pwd_context = CryptContext(
 )
 from app.db.session import SessionLocal, engine  # noqa: E402
 from app.main import app  # noqa: E402
-from app.models import Base, CustomerProfile, StaffProfile, User, UserRole  # noqa: E402
+from app.models import (  # noqa: E402
+    Base,
+    CustomerProfile,
+    StaffProfile,
+    User,
+    UserRole,
+    VisaType,
+)
 from app.services import email_service  # noqa: E402
 
 PASSWORD = "Secret123"
+# Every test starts with this team (= visa type). Staff and team admins join it by default.
+DEFAULT_TEAM_ID = uuid.UUID("00000000-0000-4000-8000-000000000001")
+TEAM = str(DEFAULT_TEAM_ID)
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -49,6 +60,11 @@ async def _clean_tables() -> None:
     tables = ", ".join(t.name for t in Base.metadata.sorted_tables)
     async with engine.begin() as conn:
         await conn.execute(text(f"TRUNCATE {tables} CASCADE"))
+        await conn.execute(
+            VisaType.__table__.insert().values(
+                id=DEFAULT_TEAM_ID, name="Default Team", slug="default-team", sort_order=99
+            )
+        )
     email_service.outbox.clear()
 
 
@@ -73,6 +89,7 @@ async def create_user(
     verified: bool = True,
     active: bool = True,
     full_name: str = "Test User",
+    team_id: uuid.UUID | None = None,
 ) -> User:
     user = User(
         email=email,
@@ -82,6 +99,8 @@ async def create_user(
         is_verified=verified,
         is_active=active,
     )
+    if role in (UserRole.STAFF, UserRole.ADMIN):
+        user.team_id = team_id or DEFAULT_TEAM_ID
     if role == UserRole.CUSTOMER:
         user.customer_profile = CustomerProfile()
     if role == UserRole.STAFF:

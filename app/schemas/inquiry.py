@@ -19,7 +19,16 @@ class UserBrief(ORMModel):
     role: UserRole
 
 
+class TeamBrief(ORMModel):
+    """A team = a visa type."""
+
+    id: uuid.UUID
+    name: str
+    slug: str
+
+
 class InquiryCreate(BaseModel):
+    visa_type_id: uuid.UUID  # which team handles it
     subject: str = Field(min_length=3, max_length=200)
     category: InquiryCategory = "general"
     description: str = Field(min_length=10, max_length=5000)
@@ -30,6 +39,7 @@ class InquiryCreate(BaseModel):
 class InquiryOut(ORMModel):
     id: uuid.UUID
     ref_no: str
+    visa_type: TeamBrief
     subject: str
     category: str
     description: str
@@ -91,3 +101,4 @@ class StaffBrief(ORMModel):
     email: str
     designation: str | None = None
     invite_pending: bool = False  # hasn't accepted the invite yet, can't sign in
+    team: TeamBrief | None = None

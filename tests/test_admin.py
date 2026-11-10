@@ -4,14 +4,14 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import AuditLog, DocumentRequirement, UserRole, VisaType
-from tests.conftest import PASSWORD, auth_header, create_user, last_email, login
+from tests.conftest import PASSWORD, TEAM, auth_header, create_user, last_email, login
 
 ADMIN = "/api/v1/admin"
 
 
 @pytest.fixture
 async def h(client: AsyncClient, db: AsyncSession) -> dict:
-    await create_user(db, email="admin@example.com", role=UserRole.ADMIN, full_name="Ad Min")
+    await create_user(db, email="admin@example.com", role=UserRole.SUPER_ADMIN, full_name="Ad Min")
     await create_user(db, email="cust@example.com", full_name="Jane Perera")
     await create_user(db, email="s1@example.com", role=UserRole.STAFF, full_name="Staff One")
     return {
@@ -23,7 +23,11 @@ async def _completed_inquiry(client: AsyncClient, h: dict) -> dict:
     inquiry = (
         await client.post(
             "/api/v1/inquiries",
-            json={"subject": "Visa advice", "description": "Please help with my visa."},
+            json={
+                "visa_type_id": TEAM,
+                "subject": "Visa advice",
+                "description": "Please help with my visa.",
+            },
             headers=h["cust"],
         )
     ).json()
@@ -38,7 +42,12 @@ async def _completed_inquiry(client: AsyncClient, h: dict) -> dict:
 
 
 async def test_staff_lifecycle_invite_edit_deactivate(client: AsyncClient, db: AsyncSession, h):
-    body = {"email": "New.Staff@Example.com", "full_name": "New Staff", "designation": "Consultant"}
+    body = {
+        "email": "New.Staff@Example.com",
+        "full_name": "New Staff",
+        "designation": "Consultant",
+        "team_id": TEAM,
+    }
     resp = await client.post(f"{ADMIN}/staff", json=body, headers=h["admin"])
     assert resp.status_code == 201, resp.text
     staff = resp.json()
@@ -125,7 +134,11 @@ async def test_reviews_flow_and_moderation(client: AsyncClient, h):
     open_inquiry = (
         await client.post(
             "/api/v1/inquiries",
-            json={"subject": "Another one", "description": "Another question here."},
+            json={
+                "visa_type_id": TEAM,
+                "subject": "Another one",
+                "description": "Another question here.",
+            },
             headers=h["cust"],
         )
     ).json()
@@ -189,7 +202,7 @@ async def test_dashboard_counts(client: AsyncClient, h):
     await _completed_inquiry(client, h)
     await client.post(
         "/api/v1/inquiries",
-        json={"subject": "Second", "description": "Unassigned question."},
+        json={"visa_type_id": TEAM, "subject": "Second", "description": "Unassigned question."},
         headers=h["cust"],
     )
     data = (await client.get(f"{ADMIN}/dashboard", headers=h["admin"])).json()

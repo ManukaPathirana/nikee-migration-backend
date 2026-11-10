@@ -29,10 +29,12 @@ async def list_applications(
     params: Annotated[PageParams, Depends(page_params)],
     status_filter: Annotated[ApplicationStatus | None, Query(alias="status")] = None,
     assigned_to_me: bool = False,
+    team_id: uuid.UUID | None = None,
 ) -> Page[ApplicationSummary]:
-    """Customers see their own applications; staff and admin see all."""
+    """Customers see their own applications; staff and team admins see their team's;
+    the super admin sees all (optionally one team with `team_id`)."""
     rows, total = await svc.list_applications(
-        db, user, params, status=status_filter, assigned_to_me=assigned_to_me
+        db, user, params, status=status_filter, assigned_to_me=assigned_to_me, team_id=team_id
     )
     return Page(
         items=[svc.to_summary(a) for a in rows],

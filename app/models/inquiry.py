@@ -11,6 +11,7 @@ from app.models.enums import InquiryStatus
 
 if TYPE_CHECKING:
     from app.models.user import User
+    from app.models.visa import VisaType
 
 
 class Inquiry(UUIDPkMixin, TimestampMixin, Base):
@@ -21,6 +22,8 @@ class Inquiry(UUIDPkMixin, TimestampMixin, Base):
 
     ref_no: Mapped[str] = mapped_column(String(20), unique=True)  # e.g. NM-2026-0001
     customer_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), index=True)
+    # The visa type the inquiry is about = the team that handles it.
+    visa_type_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("visa_types.id"), index=True)
     application_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("visa_applications.id", ondelete="SET NULL")
     )
@@ -40,6 +43,7 @@ class Inquiry(UUIDPkMixin, TimestampMixin, Base):
 
     customer: Mapped["User"] = relationship(foreign_keys=[customer_id])
     assigned_staff: Mapped["User | None"] = relationship(foreign_keys=[assigned_staff_id])
+    visa_type: Mapped["VisaType"] = relationship(lazy="selectin")
     history: Mapped[list["InquiryStatusHistory"]] = relationship(
         cascade="all, delete-orphan", order_by="InquiryStatusHistory.changed_at"
     )

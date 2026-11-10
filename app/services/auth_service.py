@@ -31,7 +31,7 @@ from app.models import (
 )
 from app.schemas.auth import TokenPair
 from app.schemas.user import UserOut
-from app.services import job_queue
+from app.services import attendance_service, job_queue
 
 GENERIC_EMAIL_SENT = "If the account exists, we've sent an email with further instructions."
 
@@ -218,6 +218,7 @@ async def login(
         raise Unauthorized("Incorrect email or password", code="invalid_credentials")
     _ensure_can_sign_in(user)
     user.last_login_at = utcnow()
+    attendance_service.record_event(db, user, "login", device_info)
     tokens = await issue_tokens(db, user, device_info)
     await db.commit()
     return tokens
@@ -249,15 +250,19 @@ async def refresh(db: AsyncSession, *, refresh_token: str, device_info: str | No
     return tokens
 
 
-async def logout(db: AsyncSession, refresh_token: str) -> None:
-    await db.execute(
-        update(RefreshToken)
-        .where(
+async def logout(db: AsyncSession, refresh_token: str, device_info: str | None = None) -> None:
+    record = await db.scalar(
+        select(RefreshToken).where(
             RefreshToken.token_hash == hash_token(refresh_token),
             RefreshToken.revoked_at.is_(None),
         )
-        .values(revoked_at=utcnow())
     )
+    if record is None:
+        return
+    record.revoked_at = utcnow()
+    user = await db.get(User, record.user_id)
+    if user is not None:
+        await attendance_service.on_logout(db, user, device_info)  # ends a running shift
     await db.commit()
 
 
@@ -345,6 +350,7 @@ async def accept_invite(
     user.password_hash = await run_in_threadpool(hash_password, password)
     user.is_verified = True
     user.last_login_at = utcnow()
+    attendance_service.record_event(db, user, "login", device_info)
     tokens = await issue_tokens(db, user, device_info)
     await db.commit()
     return tokens

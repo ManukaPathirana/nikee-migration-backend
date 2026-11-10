@@ -54,8 +54,9 @@ alembic revision --autogenerate -m "..." # then review: shared PG enums need cre
 PostgreSQL binaries live at `D:\PostgreSQL-H7\pgsql\bin` on this machine (not on PATH).
 Databases: `nikee_migrations` (dev) and `nikee_migrations_test` (pytest), owned by role `nikee`.
 
-Seeded accounts (dev): admin from `SEED_ADMIN_EMAIL`/`SEED_ADMIN_PASSWORD`;
-`demo.staff@example.com` and `demo.customer@example.com` with `SEED_DEMO_PASSWORD`.
+Seeded accounts (dev): super admin from `SEED_ADMIN_EMAIL`/`SEED_ADMIN_PASSWORD`; one team admin per
+team (`admin.<slug>@example.com`), `demo.staff@example.com` (Student team) and
+`demo.customer@example.com`, all with `SEED_DEMO_PASSWORD`.
 
 ## Auth API (`/api/v1/auth`)
 register → email OTP → verify-email (returns tokens) · resend-verification · login · refresh (rotates;
@@ -128,6 +129,22 @@ Tests use the pooled engine (all tests share one event loop) and cheap argon2 se
 
 - Files: type detected from content (PDF/PNG/JPEG only), max `MAX_UPLOAD_BYTES`; keys
   `applications/{app_id}/{uuid}.{ext}`. Local downloads use `/api/v1/files/{signed-token}` (relative URL).
+
+## Teams, super admin and work hours
+- Roles: `customer`, `staff`, `admin` (= team admin), `super_admin`. The 7 teams ARE the visa types
+  (assessment, appeal, employer, family, student, skilled, temporary). Staff and team admins have
+  exactly one `users.team_id` (DB check constraint). Every inquiry has `visa_type_id` (its team).
+- Scoping helpers: `core/permissions.py` (`team_scope`, `can_access_team`, `require_team`). Team
+  admins/staff only see their team's inquiries, applications, meetings and reviews (other teams: 404).
+  Assigning staff from another team -> 400 `wrong_team`. New inquiries notify that team's admins.
+- `AdminUser` = team admin or super admin (team-scoped; super admin may pass `team_id`).
+  `SuperAdminUser` only: company info, visa types/requirements, customers, creating team admins,
+  moving people between teams (blocked while they have open inquiries).
+- Work hours: `GET /me/work`, `POST /me/work/start|end` (staff + admins; start is idempotent).
+  Sign-in/sign-out are logged in `activity_events`; signing out ends a running shift
+  (`end_reason='logout'`). Reports: `GET /admin/reports/staff?from&to&team_id` (hours = overlap of
+  shifts with the period; output counts from audit logs/status history) and
+  `GET /admin/attendance/{user_id}`. Default period: this week (Monday, `BUSINESS_TIMEZONE`).
 
 ## Rules
 - All routes under `/api/v1`. Every list endpoint is paginated (`page`, `page_size`, returns `items`, `total`).

@@ -6,7 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import AuditLog, CompanyInfo, Notification, UserRole
-from tests.conftest import auth_header, create_user, last_email, login
+from tests.conftest import TEAM, auth_header, create_user, last_email, login
 
 API = "/api/v1/inquiries"
 
@@ -19,7 +19,7 @@ async def people(client: AsyncClient, db: AsyncSession) -> dict:
         db, email="s1@example.com", role=UserRole.STAFF, full_name="Staff One"
     )
     await create_user(db, email="s2@example.com", role=UserRole.STAFF, full_name="Staff Two")
-    await create_user(db, email="admin@example.com", role=UserRole.ADMIN, full_name="Ad Min")
+    await create_user(db, email="admin@example.com", role=UserRole.SUPER_ADMIN, full_name="Ad Min")
     h = {}
     for key, email in [
         ("cust", "cust@example.com"),
@@ -37,6 +37,7 @@ async def _create(
     client: AsyncClient, headers: dict, subject: str = "Need help with my visa"
 ) -> dict:
     body = {
+        "visa_type_id": TEAM,
         "subject": subject,
         "category": "visa_application",
         "description": "I would like advice on my student visa options.",

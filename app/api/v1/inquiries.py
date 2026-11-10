@@ -36,9 +36,11 @@ async def list_inquiries(
     status_filter: Annotated[InquiryStatus | None, Query(alias="status")] = None,
     assigned_staff_id: uuid.UUID | None = None,
     q: Annotated[str | None, Query(max_length=100)] = None,
+    team_id: uuid.UUID | None = None,
 ) -> Page[InquiryOut]:
     """Customers: their own inquiries. Staff/admin: `scope=queue` (scheduled + unclaimed),
-    `scope=mine` (assigned to me) or `all`, with optional status/staff/search filters."""
+    `scope=mine` (assigned to me) or `all`, with optional status/staff/search filters.
+    Team members only ever see their own team; the super admin can filter with `team_id`."""
     rows, total = await svc.list_inquiries(
         db,
         user,
@@ -47,6 +49,7 @@ async def list_inquiries(
         status=status_filter,
         assigned_staff_id=assigned_staff_id,
         search=q,
+        team_id=team_id,
     )
     return Page(
         items=[InquiryOut.model_validate(r) for r in rows],

@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models import UserRole
 from app.services import email_service
 from app.services.meeting_service import send_due_reminders
-from tests.conftest import auth_header, create_user, login
+from tests.conftest import TEAM, auth_header, create_user, login
 
 API = "/api/v1/meetings"
 
@@ -29,14 +29,18 @@ async def ctx(client: AsyncClient, db: AsyncSession) -> dict:
     await create_user(db, email="cust@example.com", full_name="Cust Omer")
     await create_user(db, email="s1@example.com", role=UserRole.STAFF, full_name="Staff One")
     await create_user(db, email="s2@example.com", role=UserRole.STAFF, full_name="Staff Two")
-    await create_user(db, email="admin@example.com", role=UserRole.ADMIN)
+    await create_user(db, email="admin@example.com", role=UserRole.SUPER_ADMIN)
     h = {
         k: auth_header(await login(client, f"{k}@example.com"))
         for k in ("cust", "s1", "s2", "admin")
     }
     resp = await client.post(
         "/api/v1/inquiries",
-        json={"subject": "Visa consultation", "description": "I want to discuss my options."},
+        json={
+            "visa_type_id": TEAM,
+            "subject": "Visa consultation",
+            "description": "I want to discuss my options.",
+        },
         headers=h["cust"],
     )
     h["inquiry_id"] = resp.json()["id"]
@@ -191,7 +195,11 @@ async def test_admin_flow_assign_then_schedule_single_meeting(client: AsyncClien
     meeting could be created for the same inquiry."""
     resp = await client.post(
         "/api/v1/inquiries",
-        json={"subject": "Second question", "description": "Another question for you."},
+        json={
+            "visa_type_id": TEAM,
+            "subject": "Second question",
+            "description": "Another question for you.",
+        },
         headers=ctx["cust"],
     )
     inquiry_id = resp.json()["id"]

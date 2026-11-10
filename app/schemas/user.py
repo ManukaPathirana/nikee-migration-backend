@@ -20,10 +20,17 @@ class StaffProfileOut(ORMModel):
     specialization: str | None = None
 
 
+class TeamRef(ORMModel):
+    id: uuid.UUID
+    name: str
+    slug: str
+
+
 class UserOut(ORMModel):
     id: uuid.UUID
     email: str
     role: UserRole
+    team: TeamRef | None = None  # staff and team admins
     full_name: str
     phone: str | None
     avatar_url: str | None
