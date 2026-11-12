@@ -3,12 +3,15 @@
 - REDIS_URL set   -> enqueue to arq (run `arq app.workers.WorkerSettings`).
 - REDIS_URL empty -> run as an in-process asyncio task (local dev without Redis).
 - JOBS_EAGER=true -> run inline and await it (tests).
+- On Vercel (serverless, no REDIS_URL) -> run inline before the response, errors logged.
+  Vercel freezes the function once the response is sent, so a background task could be lost.
 
-Requests never wait on email delivery except in eager mode.
+Requests never wait on email delivery except in eager mode and on Vercel.
 """
 
 import asyncio
 import logging
+import os
 from typing import Any
 
 from app.core.config import settings
@@ -52,6 +55,10 @@ async def enqueue(name: str, **kwargs: Any) -> None:
     if settings.redis_url:
         pool = await _get_arq_pool()
         await pool.enqueue_job(name, **kwargs)
+        return
+
+    if os.getenv("VERCEL"):
+        await _run_safely(name, kwargs)
         return
 
     task = asyncio.create_task(_run_safely(name, kwargs))
