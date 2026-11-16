@@ -48,3 +48,39 @@ class ApplicationStatus(StrEnum):
     APPROVED = "approved"
     REJECTED = "rejected"
     WITHDRAWN = "withdrawn"
+
+
+class CaseStage(StrEnum):
+    """Where a visa case is in the Nikee process (stored as text on visa_applications.stage)."""
+
+    INTAKE = "intake"  # customer adds passport + visa grant, then submits
+    ASSIGNMENT = "assignment"  # team admin picks a staff member
+    CONTRACT_PENDING = "contract_pending"  # staff prepares contract + deposit invoice
+    AGREEMENT = "agreement"  # customer signs the contract and pays the deposit
+    AGREEMENT_REVIEW = "agreement_review"  # staff checks signed contract + deposit
+    DOCUMENTS = "documents"  # full checklist unlocked; staff reviews, then finalizes
+    FINAL_PAYMENT = "final_payment"  # customer pays the final invoice
+    CONFIRMATION_PENDING = "confirmation_pending"  # staff sends final application + confirmation
+    CONFIRMATION = "confirmation"  # customer signs the data confirmation
+    CONFIRMATION_REVIEW = "confirmation_review"  # staff checks the signed confirmation
+    COMPLETED = "completed"
+    WITHDRAWN = "withdrawn"
+
+
+class CaseFileKind(StrEnum):
+    CONTRACT = "contract"
+    SIGNED_CONTRACT = "signed_contract"
+    FINAL_APPLICATION = "final_application"
+    DATA_CONFIRMATION = "data_confirmation"
+    SIGNED_DATA_CONFIRMATION = "signed_data_confirmation"
+
+
+class InvoiceKind(StrEnum):
+    DEPOSIT = "deposit"
+    FINAL = "final"
+
+
+class InvoiceStatus(StrEnum):
+    UNPAID = "unpaid"
+    PAID = "paid"
+    VOID = "void"

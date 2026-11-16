@@ -4,6 +4,7 @@ from app.api.v1 import (
     admin,
     applications,
     auth,
+    cases,
     company,
     files,
     health,
@@ -23,6 +24,7 @@ api_router.include_router(users.router)
 api_router.include_router(company.router)
 api_router.include_router(visa.router)
 api_router.include_router(applications.router)
+api_router.include_router(cases.router)
 api_router.include_router(files.router)
 api_router.include_router(inquiries.router)
 api_router.include_router(meetings.router)

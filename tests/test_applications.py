@@ -3,7 +3,7 @@ from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import CompanyInfo, DocumentRequirement, UserRole, VisaType
-from tests.conftest import auth_header, create_user, last_email, login
+from tests.conftest import auth_header, create_user, login
 
 PDF = b"%PDF-1.4\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF"
 PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 32
@@ -13,9 +13,10 @@ PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 32
 async def visa(db: AsyncSession) -> VisaType:
     visa = VisaType(name="Student Visa", slug="student", icon="school", sort_order=0)
     visa.requirements = [
-        DocumentRequirement(name="Passport", is_mandatory=True, sort_order=0),
-        DocumentRequirement(name="Offer letter", is_mandatory=True, sort_order=1),
-        DocumentRequirement(name="Statement of purpose", is_mandatory=False, sort_order=2),
+        DocumentRequirement(name="Passport", is_mandatory=True, is_intake=True, sort_order=0),
+        DocumentRequirement(name="Visa grant", is_mandatory=True, is_intake=True, sort_order=1),
+        DocumentRequirement(name="Offer letter", is_mandatory=True, sort_order=2),
+        DocumentRequirement(name="Statement of purpose", is_mandatory=False, sort_order=3),
     ]
     db.add(visa)
     await db.commit()
@@ -30,8 +31,28 @@ async def customer(client: AsyncClient, db: AsyncSession) -> dict:
 
 @pytest.fixture
 async def staff(client: AsyncClient, db: AsyncSession, visa: VisaType) -> dict:
-    await create_user(db, email="staff@example.com", role=UserRole.STAFF, team_id=visa.id)
-    return auth_header(await login(client, "staff@example.com"))
+    user = await create_user(db, email="staff@example.com", role=UserRole.STAFF, team_id=visa.id)
+    return auth_header(await login(client, "staff@example.com")) | {"x-id": str(user.id)}
+
+
+@pytest.fixture
+async def team_admin(client: AsyncClient, db: AsyncSession, visa: VisaType) -> dict:
+    await create_user(db, email="lead@example.com", role=UserRole.ADMIN, team_id=visa.id)
+    return auth_header(await login(client, "lead@example.com"))
+
+
+async def _submitted(client, customer, visa) -> tuple[dict, dict]:
+    """A case with passport + visa grant uploaded and submitted to the team admin."""
+    app = await _new_app(client, customer, visa)
+    ids = {i["requirement"]["name"]: i["requirement"]["id"] for i in app["checklist"]}
+    docs = {}
+    for name in ("Passport", "Visa grant"):
+        resp = await _upload(client, customer, app["id"], ids[name])
+        assert resp.status_code == 201, resp.text
+        docs[name] = resp.json()["id"]
+    resp = await client.post(f"/api/v1/applications/{app['id']}/submit", headers=customer)
+    assert resp.status_code == 200, resp.text
+    return resp.json() | {"req": ids}, docs
 
 
 async def _new_app(client: AsyncClient, headers: dict, visa: VisaType) -> dict:
@@ -64,6 +85,7 @@ async def test_public_company_and_visa_types(client: AsyncClient, db: AsyncSessi
     resp = await client.get("/api/v1/visa-types")
     assert [r["name"] for r in resp.json()[0]["requirements"]] == [
         "Passport",
+        "Visa grant",
         "Offer letter",
         "Statement of purpose",
     ]
@@ -85,83 +107,77 @@ async def test_admin_updates_company_others_cannot(client: AsyncClient, db: Asyn
     assert resp.json()["whatsapp"] == "+94771234567"
 
 
-async def test_application_document_flow(client: AsyncClient, visa, customer, staff):
+async def test_intake_unlocks_only_passport_and_visa_grant(
+    client: AsyncClient, db: AsyncSession, visa, customer, staff, team_admin
+):
     app = await _new_app(client, customer, visa)
     assert app["status"] == "draft"
-    assert app["progress"] == {"required": 2, "uploaded": 0, "approved": 0}
-    passport, offer, _ = (item["requirement"]["id"] for item in app["checklist"])
+    assert app["stage"] == "intake"
+    assert app["ref_no"].startswith("NM-C-")
+    locked = {i["requirement"]["name"]: i["locked"] for i in app["checklist"]}
+    assert locked == {
+        "Passport": False,
+        "Visa grant": False,
+        "Offer letter": True,
+        "Statement of purpose": True,
+    }
+    ids = {i["requirement"]["name"]: i["requirement"]["id"] for i in app["checklist"]}
 
-    # Cannot submit with mandatory documents missing.
+    # Can't submit without both intake documents; can't upload locked ones.
     resp = await client.post(f"/api/v1/applications/{app['id']}/submit", headers=customer)
     assert resp.json()["error"]["code"] == "documents_missing"
+    resp = await _upload(client, customer, app["id"], ids["Offer letter"])
+    assert resp.status_code == 403
+    assert resp.json()["error"]["code"] == "documents_locked"
+    resp = await _upload(client, customer, app["id"])
+    assert resp.json()["error"]["code"] == "documents_locked"
 
-    resp = await _upload(client, customer, app["id"], passport)
-    assert resp.status_code == 201, resp.text
-    assert resp.json()["mime_type"] == "application/pdf"
-    passport_doc = resp.json()["id"]
-    resp = await _upload(client, customer, app["id"], offer, data=PNG, name="offer.png")
+    resp = await _upload(client, customer, app["id"], ids["Passport"], data=PNG, name="p.png")
     assert resp.json()["mime_type"] == "image/png"
-    offer_doc = resp.json()["id"]
-
+    await _upload(client, customer, app["id"], ids["Visa grant"])
     resp = await client.post(f"/api/v1/applications/{app['id']}/submit", headers=customer)
     assert resp.status_code == 200
-    assert resp.json()["status"] == "submitted"
+    body = resp.json()
+    assert body["stage"] == "assignment"
+    assert body["waiting_on"] == "admin"
+    assert body["status"] == "submitted"
 
-    # Staff rejects without a reason -> validation error; with a reason -> ok + email.
-    url = f"/api/v1/documents/{offer_doc}/review"
-    resp = await client.post(url, json={"status": "rejected"}, headers=staff)
-    assert resp.status_code == 422
-    resp = await client.post(
-        url, json={"status": "rejected", "rejection_reason": "Blurry scan"}, headers=staff
-    )
-    assert resp.status_code == 200
-    assert resp.json()["rejection_reason"] == "Blurry scan"
-    assert last_email("cust@example.com")["context"]["reason"] == "Blurry scan"
-
-    detail = (await client.get(f"/api/v1/applications/{app['id']}", headers=customer)).json()
-    assert detail["status"] == "in_review"
-    assert detail["checklist"][1]["document"]["status"] == "rejected"
-    assert detail["progress"]["uploaded"] == 1
-
-    # Customer re-uploads; staff approves everything; then approves the application.
-    resp = await _upload(client, customer, app["id"], offer)
-    offer_doc = resp.json()["id"]
-    for doc in (passport_doc, offer_doc):
-        resp = await client.post(
-            f"/api/v1/documents/{doc}/review", json={"status": "approved"}, headers=staff
-        )
-        assert resp.status_code == 200
-    resp = await client.post(
-        f"/api/v1/applications/{app['id']}/status", json={"status": "approved"}, headers=staff
-    )
-    assert resp.status_code == 200, resp.text
-    assert resp.json()["status"] == "approved"
-    assert resp.json()["progress"]["approved"] == 2
-
-    # Closed applications can't take new uploads.
-    resp = await _upload(client, customer, app["id"], passport)
-    assert resp.json()["error"]["code"] == "application_closed"
+    # The team admin is told; staff can't see a case that isn't theirs.
+    notes = (await client.get("/api/v1/notifications", headers=team_admin)).json()["items"]
+    assert any(n["type"] == "case_new" for n in notes)
+    assert (await client.get(f"/api/v1/applications/{app['id']}", headers=staff)).status_code == 404
+    assert (await client.get("/api/v1/applications", headers=staff)).json()["total"] == 0
+    waiting = await client.get("/api/v1/applications?waiting=admin", headers=team_admin)
+    assert waiting.json()["total"] == 1
 
 
 async def test_upload_rejects_bad_files(client: AsyncClient, visa, customer, monkeypatch):
     app = await _new_app(client, customer, visa)
-    resp = await _upload(client, customer, app["id"], data=b"MZ\x90\x00 not a pdf", name="x.pdf")
+    passport = app["checklist"][0]["requirement"]["id"]
+    resp = await _upload(client, customer, app["id"], passport, data=b"MZ not a pdf", name="x.pdf")
     assert resp.status_code == 415
     assert resp.json()["error"]["code"] == "unsupported_file_type"
 
     from app.core.config import settings
 
     monkeypatch.setattr(settings, "max_upload_bytes", 20)
-    resp = await _upload(client, customer, app["id"], data=PDF)
+    resp = await _upload(client, customer, app["id"], passport, data=PDF)
     assert resp.status_code == 413
     assert resp.json()["error"]["code"] == "file_too_large"
 
 
-async def test_download_url_and_access_control(client: AsyncClient, db, visa, customer, staff):
-    app = await _new_app(client, customer, visa)
-    doc = (await _upload(client, customer, app["id"])).json()
+async def test_download_url_and_access_control(
+    client: AsyncClient, db, visa, customer, staff, team_admin
+):
+    app, docs = await _submitted(client, customer, visa)
+    resp = await client.post(
+        f"/api/v1/applications/{app['id']}/assign",
+        json={"staff_id": staff["x-id"]},
+        headers=team_admin,
+    )
+    assert resp.status_code == 200, resp.text
 
-    resp = await client.get(f"/api/v1/documents/{doc['id']}/download-url", headers=staff)
+    resp = await client.get(f"/api/v1/documents/{docs['Passport']}/download-url", headers=staff)
     assert resp.status_code == 200
     url = resp.json()["url"]
     assert url.startswith("/api/v1/files/")
@@ -175,33 +191,37 @@ async def test_download_url_and_access_control(client: AsyncClient, db, visa, cu
     await create_user(db, email="other@example.com")
     other = auth_header(await login(client, "other@example.com"))
     assert (await client.get(f"/api/v1/applications/{app['id']}", headers=other)).status_code == 404
-    resp = await client.get(f"/api/v1/documents/{doc['id']}/download-url", headers=other)
+    resp = await client.get(f"/api/v1/documents/{docs['Passport']}/download-url", headers=other)
     assert resp.status_code == 404
     listing = (await client.get("/api/v1/applications", headers=other)).json()
     assert listing["total"] == 0
 
-    # Staff can't upload or create applications on behalf of customers.
-    assert (await _upload(client, staff, app["id"])).status_code == 403
+    # Staff can't upload on behalf of customers.
+    assert (await _upload(client, staff, app["id"], app["req"]["Passport"])).status_code == 403
 
 
 async def test_delete_pending_document_and_withdraw(client: AsyncClient, visa, customer):
     app = await _new_app(client, customer, visa)
-    doc = (await _upload(client, customer, app["id"])).json()
+    passport = app["checklist"][0]["requirement"]["id"]
+    doc = (await _upload(client, customer, app["id"], passport)).json()
     resp = await client.delete(f"/api/v1/documents/{doc['id']}", headers=customer)
     assert resp.status_code == 204
     detail = (await client.get(f"/api/v1/applications/{app['id']}", headers=customer)).json()
-    assert detail["other_documents"] == []
+    assert detail["checklist"][0]["document"] is None
 
     resp = await client.post(f"/api/v1/applications/{app['id']}/withdraw", headers=customer)
     assert resp.json()["status"] == "withdrawn"
+    assert resp.json()["stage"] == "withdrawn"
     resp = await client.post(f"/api/v1/applications/{app['id']}/withdraw", headers=customer)
     assert resp.status_code == 400
 
 
-async def test_invalid_status_transition(client: AsyncClient, visa, customer, staff):
-    app = await _new_app(client, customer, visa)
-    resp = await client.post(
-        f"/api/v1/applications/{app['id']}/status", json={"status": "approved"}, headers=staff
-    )
+async def test_old_status_endpoint_only_rejects(client: AsyncClient, visa, customer, team_admin):
+    app, _ = await _submitted(client, customer, visa)
+    url = f"/api/v1/applications/{app['id']}/status"
+    resp = await client.post(url, json={"status": "approved"}, headers=team_admin)
     assert resp.status_code == 400
-    assert resp.json()["error"]["code"] == "invalid_transition"
+    assert resp.json()["error"]["code"] == "use_case_steps"
+    resp = await client.post(url, json={"status": "rejected"}, headers=team_admin)
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["stage"] == "withdrawn"

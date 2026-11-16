@@ -1,11 +1,11 @@
 import uuid
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, File, Form, Query, Response, UploadFile, status
 
 from app.core.config import settings
 from app.core.deps import CurrentUser, CustomerUser, DbSession, StaffOrAdmin
-from app.models import ApplicationStatus
+from app.models import ApplicationStatus, CaseStage
 from app.schemas.common import Page, PageParams, page_params
 from app.schemas.visa import (
     ApplicationCreate,
@@ -30,11 +30,20 @@ async def list_applications(
     status_filter: Annotated[ApplicationStatus | None, Query(alias="status")] = None,
     assigned_to_me: bool = False,
     team_id: uuid.UUID | None = None,
+    stage: CaseStage | None = None,
+    waiting: Annotated[Literal["customer", "admin", "staff"] | None, Query()] = None,
 ) -> Page[ApplicationSummary]:
-    """Customers see their own applications; staff and team admins see their team's;
-    the super admin sees all (optionally one team with `team_id`)."""
+    """Customers see their own cases; staff see the cases assigned to them; team admins see
+    their team's; the super admin sees all (optionally one team with `team_id`)."""
     rows, total = await svc.list_applications(
-        db, user, params, status=status_filter, assigned_to_me=assigned_to_me, team_id=team_id
+        db,
+        user,
+        params,
+        status=status_filter,
+        assigned_to_me=assigned_to_me,
+        team_id=team_id,
+        stage=stage,
+        waiting=waiting,
     )
     return Page(
         items=[svc.to_summary(a) for a in rows],

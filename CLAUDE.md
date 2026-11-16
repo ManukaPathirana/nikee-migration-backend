@@ -150,6 +150,23 @@ Tests use the pooled engine (all tests share one event loop) and cheap argon2 se
   shifts with the period; output counts from audit logs/status history) and
   `GET /admin/attendance/{user_id}`. Default period: this week (Monday, `BUSINESS_TIMEZONE`).
 
+## Visa case flow (applications)
+Stages (`visa_applications.stage`, `CaseStage`): intake -> assignment -> contract_pending ->
+agreement -> agreement_review -> documents -> final_payment -> confirmation_pending ->
+confirmation -> confirmation_review -> completed (or withdrawn). `waiting_on` says who acts next.
+- Intake: only `is_intake` requirements (passport, visa grant) can be uploaded; submit sends the
+  case to the team admin (`case_new` notification). Other documents return 403 `documents_locked`
+  until the staff member approves the signed contract and deposit.
+- `POST /applications/{id}/assign` (team admin), `/agreement` (staff: contract PDF + deposit),
+  `/sign` (customer: drawn signature PNG; backend adds a signature page via pypdf/reportlab),
+  `/agreement/approve|recall`, `/finalize` (final invoice), `/confirmation` (final application +
+  data confirmation PDFs), `/confirmation/recall`, `/complete`. Staff see only their own cases.
+- Invoices (`NM-INV-<year>-NNNN`) are generated PDFs. `POST /invoices/{id}/checkout` returns a URL:
+  Stripe Checkout (AUD) when `PAYMENTS_BACKEND=stripe` + `STRIPE_SECRET_KEY`, else a built-in test
+  page (never in production). Payments are confirmed by the webhook
+  (`/payments/stripe/webhook`), the return page, or `POST /invoices/{id}/confirm`.
+- `GET /admin/team-overview`: per staff member cases by phase, tasks waiting on them, overdue (>48h).
+
 ## Rules
 - All routes under `/api/v1`. Every list endpoint is paginated (`page`, `page_size`, returns `items`, `total`).
 - Consistent error format: `{"error": {"code": str, "message": str, "details": any}}`.

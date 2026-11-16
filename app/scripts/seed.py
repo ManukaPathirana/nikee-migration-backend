@@ -34,6 +34,9 @@ DEMO_CUSTOMER_EMAIL = "demo.customer@example.com"
 # Keep in step with migration 9b8b3ac0fe01, which renames/adds these on existing databases.
 PASSPORT = ("Passport (bio page)", "Clear scan of the photo page, valid 6+ months.", True)
 PHOTO = ("Passport-size photo", "Recent photo on a plain light background.", True)
+# Intake documents: uploaded before the contract; everything else unlocks after the deposit.
+VISA_GRANT = ("Visa grant notice", "Your current or most recent visa grant letter.", True)
+INTAKE = {PASSPORT[0], VISA_GRANT[0]}
 VISA_TYPES: list[tuple[str, str, str, str, list[tuple[str, str, bool]]]] = [
     (
         "Assessment",
@@ -205,11 +208,16 @@ async def seed() -> None:
                 visa = VisaType(
                     name=name, slug=slug, icon=icon, description=description, sort_order=order
                 )
+                reqs = [requirements[0], VISA_GRANT, *requirements[1:]]
                 visa.requirements = [
                     DocumentRequirement(
-                        name=req, description=desc, is_mandatory=mandatory, sort_order=i
+                        name=req,
+                        description=desc,
+                        is_mandatory=mandatory,
+                        is_intake=req in INTAKE,
+                        sort_order=i,
                     )
-                    for i, (req, desc, mandatory) in enumerate(requirements)
+                    for i, (req, desc, mandatory) in enumerate(reqs)
                 ]
                 db.add(visa)
                 await db.flush()

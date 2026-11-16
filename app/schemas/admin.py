@@ -173,3 +173,44 @@ class RequirementUpdate(BaseModel):
 
 class ActiveIn(BaseModel):
     is_active: bool
+
+
+# ---------------------------------------------------------------- team overview (visa cases)
+
+
+class WaitingItem(BaseModel):
+    application_id: uuid.UUID
+    ref_no: str | None
+    customer_name: str
+    task: str  # e.g. "Send contract and deposit invoice"
+    since: datetime | None
+    overdue: bool
+
+
+class StaffWork(BaseModel):
+    """One staff member's caseload for the team admin."""
+
+    user_id: uuid.UUID
+    full_name: str
+    email: str
+    team: TeamBrief | None
+    working_now: bool
+    working_since: datetime | None
+    today_seconds: int
+    cases_total: int
+    # new · agreement · documents · payment · confirmation
+    by_phase: dict[str, int]
+    waiting: list[WaitingItem]  # tasks waiting on this staff member, oldest first
+    overdue: int
+    last_action: str | None
+    last_action_at: datetime | None
+
+
+class TeamOverviewOut(BaseModel):
+    team: TeamBrief | None
+    open_cases: int
+    unassigned: int  # waiting for the team admin
+    waiting_on_staff: int
+    waiting_on_customer: int
+    paid_this_week_cents: int
+    staff: list[StaffWork]

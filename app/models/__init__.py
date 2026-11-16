@@ -2,10 +2,15 @@
 
 from app.db.base import Base
 from app.models.attendance import ActivityEvent, WorkSession
+from app.models.case import CaseFile, Invoice
 from app.models.enums import (
     ApplicationStatus,
+    CaseFileKind,
+    CaseStage,
     DocumentStatus,
     InquiryStatus,
+    InvoiceKind,
+    InvoiceStatus,
     MeetingMode,
     MeetingStatus,
     UserRole,
@@ -35,6 +40,9 @@ __all__ = [
     "ApplicationStatus",
     "AuditLog",
     "Base",
+    "CaseFile",
+    "CaseFileKind",
+    "CaseStage",
     "CompanyInfo",
     "CustomerProfile",
     "DeviceToken",
@@ -45,6 +53,9 @@ __all__ = [
     "InquiryNote",
     "InquiryStatus",
     "InquiryStatusHistory",
+    "Invoice",
+    "InvoiceKind",
+    "InvoiceStatus",
     "Meeting",
     "MeetingMode",
     "MeetingSlot",

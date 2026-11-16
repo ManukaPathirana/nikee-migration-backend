@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import BigInteger, ForeignKey, String, Text, text, true
+from sqlalchemy import BigInteger, ForeignKey, String, Text, false, text, true
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base, TimestampMixin, UUIDPkMixin, pg_enum
@@ -34,6 +34,9 @@ class DocumentRequirement(UUIDPkMixin, TimestampMixin, Base):
     name: Mapped[str] = mapped_column(String(200))
     description: Mapped[str | None] = mapped_column(Text)
     is_mandatory: Mapped[bool] = mapped_column(default=True, server_default=true())
+    # Intake documents (passport, visa grant) can be uploaded straight away; the rest unlock
+    # once the staff member approves the signed contract and deposit.
+    is_intake: Mapped[bool] = mapped_column(default=False, server_default=false())
     sort_order: Mapped[int] = mapped_column(default=0, server_default=text("0"))
 
     visa_type: Mapped[VisaType] = relationship(back_populates="requirements")
@@ -54,6 +57,10 @@ class VisaApplication(UUIDPkMixin, TimestampMixin, Base):
         ForeignKey("users.id", ondelete="SET NULL"), index=True
     )
     submitted_at: Mapped[datetime | None]
+    # Case reference shown to everyone, e.g. NM-C-2026-0007.
+    ref_no: Mapped[str | None] = mapped_column(String(30), unique=True)
+    stage: Mapped[str] = mapped_column(String(40), default="intake", server_default="intake")
+    stage_changed_at: Mapped[datetime | None]
 
     visa_type: Mapped[VisaType] = relationship()
     customer: Mapped["User"] = relationship(foreign_keys=[customer_id])  # noqa: F821
@@ -61,6 +68,15 @@ class VisaApplication(UUIDPkMixin, TimestampMixin, Base):
         back_populates="application",
         cascade="all, delete-orphan",
         order_by="ApplicationDocument.created_at",
+    )
+    assigned_staff: Mapped["User | None"] = relationship(  # noqa: F821
+        foreign_keys=[assigned_staff_id]
+    )
+    files: Mapped[list["CaseFile"]] = relationship(  # noqa: F821
+        cascade="all, delete-orphan", order_by="CaseFile.created_at.desc()"
+    )
+    invoices: Mapped[list["Invoice"]] = relationship(  # noqa: F821
+        cascade="all, delete-orphan", order_by="Invoice.created_at.desc()"
     )
 
 

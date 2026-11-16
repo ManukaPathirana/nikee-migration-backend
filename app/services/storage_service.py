@@ -40,6 +40,7 @@ def sniff_file_type(data: bytes) -> str | None:
 class Storage(Protocol):
     async def save(self, key: str, data: bytes, content_type: str) -> None: ...
     async def delete(self, key: str) -> None: ...
+    async def read(self, key: str) -> bytes: ...
     async def download_url(self, key: str, filename: str, content_type: str) -> str: ...
 
 
@@ -87,6 +88,9 @@ class LocalStorage:
     async def delete(self, key: str) -> None:
         await asyncio.to_thread(self.path_for(key).unlink, True)
 
+    async def read(self, key: str) -> bytes:
+        return await asyncio.to_thread(self.path_for(key).read_bytes)
+
     async def download_url(self, key: str, filename: str, content_type: str) -> str:
         return f"{settings.api_v1_prefix}/files/{_sign_file_token(key, filename, content_type)}"
 
@@ -118,6 +122,10 @@ class S3Storage:
 
     async def delete(self, key: str) -> None:
         await asyncio.to_thread(self.client.delete_object, Bucket=self.bucket, Key=key)
+
+    async def read(self, key: str) -> bytes:
+        obj = await asyncio.to_thread(self.client.get_object, Bucket=self.bucket, Key=key)
+        return await asyncio.to_thread(obj["Body"].read)
 
     async def download_url(self, key: str, filename: str, content_type: str) -> str:
         return await asyncio.to_thread(

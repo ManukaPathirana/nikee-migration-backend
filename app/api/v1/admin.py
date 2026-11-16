@@ -17,6 +17,7 @@ from app.schemas.admin import (
     StaffCreate,
     StaffOut,
     StaffUpdate,
+    TeamOverviewOut,
     VisaTypeAdminOut,
     VisaTypeCreate,
     VisaTypeUpdate,
@@ -26,7 +27,13 @@ from app.schemas.common import MessageOut, Page, PageParams, page_params
 from app.schemas.company import CompanyOut, CompanyUpdate
 from app.schemas.inquiry import BoardOut, InquiryOut
 from app.schemas.review import ReviewModerate, ReviewOut
-from app.services import admin_service, attendance_service, inquiry_service, review_service
+from app.services import (
+    admin_service,
+    attendance_service,
+    inquiry_service,
+    review_service,
+    team_overview_service,
+)
 from app.services.audit_service import audit
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -202,6 +209,17 @@ async def moderate_review(
     review = await review_service.get_review(db, review_id)
     updated = await review_service.moderate(db, admin, review, data.model_dump(exclude_unset=True))
     return ReviewOut.model_validate(updated)
+
+
+# ---------------------------------------------------------------- team overview
+
+
+@router.get("/team-overview", response_model=TeamOverviewOut)
+async def team_overview(
+    admin: AdminUser, db: DbSession, team_id: TeamFilter = None
+) -> TeamOverviewOut:
+    """Every staff member's open visa cases, what's waiting on them, and what's overdue."""
+    return await team_overview_service.team_overview(db, admin, team_id)
 
 
 # ---------------------------------------------------------------- work hours

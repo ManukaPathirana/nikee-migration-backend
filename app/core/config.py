@@ -71,6 +71,15 @@ class Settings(BaseSettings):
     s3_secret_access_key: str = ""
     s3_region: str = ""
 
+    # Payments. "test" shows a built-in checkout page so the flow works without a gateway
+    # account (never in production); "stripe" uses Stripe Checkout in AUD.
+    payments_backend: Literal["test", "stripe"] = "test"
+    stripe_secret_key: str = ""
+    stripe_webhook_secret: str = ""
+    currency: str = "AUD"
+    # Public address of this API; payment pages send customers back here.
+    public_api_url: str = "http://localhost:8000"
+
     @property
     def is_test(self) -> bool:
         return self.app_env == "test"
