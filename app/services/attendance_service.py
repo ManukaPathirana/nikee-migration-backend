@@ -24,6 +24,7 @@ from app.models import (
 from app.schemas.attendance import (
     ActivityEventOut,
     AttendanceDetailOut,
+    MyShiftsOut,
     StaffReportOut,
     StaffReportRow,
     WorkSessionOut,
@@ -47,6 +48,10 @@ def day_start(now: datetime | None = None) -> datetime:
 def week_start(now: datetime | None = None) -> datetime:
     start = day_start(now)
     return start - timedelta(days=start.weekday())
+
+
+def month_start(now: datetime | None = None) -> datetime:
+    return day_start(now).replace(day=1)
 
 
 def overlap_seconds(
@@ -94,14 +99,36 @@ async def open_session(db: AsyncSession, user_id: uuid.UUID) -> WorkSession | No
 
 async def status(db: AsyncSession, user: User) -> WorkStatusOut:
     now = utcnow()
-    week = week_start(now)
-    sessions = await _sessions(db, [user.id], week, now + timedelta(seconds=1))
+    week, month = week_start(now), month_start(now)
+    sessions = await _sessions(db, [user.id], min(week, month), now + timedelta(seconds=1))
     current = next((s for s in sessions if s.ended_at is None), None)
+    last = current or await db.scalar(
+        select(WorkSession)
+        .where(WorkSession.user_id == user.id)
+        .order_by(WorkSession.started_at.desc())
+        .limit(1)
+    )
     return WorkStatusOut(
         working=current is not None,
         current=WorkSessionOut.model_validate(current) if current else None,
         today_seconds=overlap_seconds(sessions, day_start(now), now, now),
         week_seconds=overlap_seconds(sessions, week, now, now),
+        month_seconds=overlap_seconds(sessions, month, now, now),
+        last=WorkSessionOut.model_validate(last) if last else None,
+    )
+
+
+async def my_shifts(
+    db: AsyncSession, user: User, start: datetime | None = None, end: datetime | None = None
+) -> MyShiftsOut:
+    """My own shifts in the period (default: this week), newest first."""
+    start, end = _period(start, end)
+    sessions = await _sessions(db, [user.id], start, end)
+    return MyShiftsOut(
+        period_start=start,
+        period_end=end,
+        worked_seconds=overlap_seconds(sessions, start, end),
+        sessions=[WorkSessionOut.model_validate(s) for s in reversed(sessions)],
     )
 
 

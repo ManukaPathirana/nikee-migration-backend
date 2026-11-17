@@ -205,8 +205,16 @@ async def test_start_and_end_work(client: AsyncClient, org):
     assert first["working"] and again["current"]["id"] == first["current"]["id"]
     ended = (await client.post(f"{API}/me/work/end", headers=me)).json()
     assert ended["working"] is False
+    # The last punch is kept with its start and end time.
+    assert ended["last"]["id"] == first["current"]["id"] and ended["last"]["ended_at"]
+    assert ended["month_seconds"] >= 0
+    # My own shift list.
+    mine = (await client.get(f"{API}/me/work/shifts", headers=me)).json()
+    assert [s["id"] for s in mine["sessions"]] == [first["current"]["id"]]
+    assert mine["worked_seconds"] >= 0
     # Customers have no clock.
     assert (await client.post(f"{API}/me/work/start", headers=org["cust"])).status_code == 403
+    assert (await client.get(f"{API}/me/work/shifts", headers=org["cust"])).status_code == 403
 
 
 async def test_sign_out_ends_shift_and_is_logged(client: AsyncClient, db: AsyncSession, org):

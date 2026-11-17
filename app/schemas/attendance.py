@@ -22,6 +22,17 @@ class WorkStatusOut(BaseModel):
     current: WorkSessionOut | None
     today_seconds: int
     week_seconds: int
+    month_seconds: int = 0
+    last: WorkSessionOut | None = None  # most recent shift, running or finished
+
+
+class MyShiftsOut(BaseModel):
+    """The signed-in person's own shifts in a period, newest first."""
+
+    period_start: datetime
+    period_end: datetime
+    worked_seconds: int
+    sessions: list[WorkSessionOut]
 
 
 class ActivityEventOut(ORMModel):

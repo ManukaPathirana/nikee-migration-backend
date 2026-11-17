@@ -1,8 +1,11 @@
-from fastapi import APIRouter
+from datetime import datetime
+from typing import Annotated
+
+from fastapi import APIRouter, Query
 
 from app.core.deps import CurrentUser, DbSession, InternalUser
 from app.models import CustomerProfile, UserRole
-from app.schemas.attendance import WorkStatusOut
+from app.schemas.attendance import MyShiftsOut, WorkStatusOut
 from app.schemas.user import MeOut, MeUpdate
 from app.services import attendance_service
 
@@ -49,3 +52,14 @@ async def start_work(user: InternalUser, db: DbSession) -> WorkStatusOut:
 async def end_work(user: InternalUser, db: DbSession) -> WorkStatusOut:
     """End work. Signing out also ends a running shift."""
     return await attendance_service.end_work(db, user)
+
+
+@router.get("/work/shifts", response_model=MyShiftsOut)
+async def my_shifts(
+    user: InternalUser,
+    db: DbSession,
+    start: Annotated[datetime | None, Query(alias="from")] = None,
+    end: Annotated[datetime | None, Query(alias="to")] = None,
+) -> MyShiftsOut:
+    """My own Start/End work shifts and total worked in the period (default: this week)."""
+    return await attendance_service.my_shifts(db, user, start, end)
