@@ -40,6 +40,7 @@ def invoice_pdf(
     description: str,
     amount_cents: int,
     currency: str,
+    payment_type: str | None = None,
     paid_at: datetime | None = None,
     payment_ref: str | None = None,
 ) -> bytes:
@@ -65,6 +66,10 @@ def invoice_pdf(
     c.setFont("Helvetica", 10)
     c.drawRightString(w - 20 * mm, h - 32 * mm, f"No. {number}")
     c.drawRightString(w - 20 * mm, h - 37 * mm, f"Issued {issued.strftime('%d %b %Y')}")
+    if payment_type:
+        c.setFillColor(NAVY)
+        c.setFont("Helvetica-Bold", 10)
+        c.drawRightString(w - 20 * mm, h - 44 * mm, f"Payment type: {payment_type[:60]}")
 
     # Bill to
     y = h - 62 * mm
@@ -87,8 +92,18 @@ def invoice_pdf(
     c.drawString(23 * mm, y + 1 * mm, "Description")
     c.drawRightString(w - 23 * mm, y + 1 * mm, "Amount")
     c.setFillColor(colors.black)
-    c.setFont("Helvetica", 10)
-    c.drawString(23 * mm, y - 9 * mm, description[:90])
+    if payment_type:
+        c.setFont("Helvetica-Bold", 10)
+        c.drawString(23 * mm, y - 8 * mm, payment_type[:70])
+        c.setFont("Helvetica", 8)
+        c.setFillColor(GREY)
+        detail = description.removeprefix(f"{payment_type} · ")
+        c.drawString(23 * mm, y - 12 * mm, detail[:115])
+        c.setFillColor(colors.black)
+        c.setFont("Helvetica", 10)
+    else:
+        c.setFont("Helvetica", 10)
+        c.drawString(23 * mm, y - 9 * mm, description[:90])
     c.drawRightString(w - 23 * mm, y - 9 * mm, money(amount_cents, currency))
     c.setStrokeColor(colors.HexColor("#E5E7EB"))
     c.line(20 * mm, y - 14 * mm, w - 20 * mm, y - 14 * mm)

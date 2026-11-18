@@ -47,6 +47,8 @@ class Invoice(UUIDPkMixin, TimestampMixin, Base):
     amount_cents: Mapped[int] = mapped_column(Integer)
     currency: Mapped[str] = mapped_column(String(3), default="AUD", server_default="AUD")
     description: Mapped[str] = mapped_column(String(300))
+    # What the payment is for, picked or typed by staff ("Consultation Fee"); printed on the PDF.
+    payment_type: Mapped[str | None] = mapped_column(String(120))
     status: Mapped[str] = mapped_column(String(20), default="unpaid", server_default="unpaid")
     file_key: Mapped[str | None] = mapped_column(String(500))  # generated PDF
     checkout_id: Mapped[str | None] = mapped_column(String(255), index=True)  # gateway session

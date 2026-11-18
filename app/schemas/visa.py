@@ -113,6 +113,7 @@ class InvoiceOut(ORMModel):
     amount_cents: int
     currency: str
     description: str
+    payment_type: str | None = None
     status: InvoiceStatus
     paid_at: datetime | None
     created_at: datetime
@@ -173,6 +174,9 @@ class ReasonIn(BaseModel):
 
 class AmountIn(BaseModel):
     amount: str = Field(min_length=1, max_length=20, description="Dollars, e.g. 1800 or 1800.50")
+    payment_type: str = Field(
+        "", max_length=120, description="What the payment is for; empty = the default label"
+    )
 
 
 class CheckoutOut(BaseModel):

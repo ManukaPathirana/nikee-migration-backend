@@ -50,11 +50,14 @@ async def send_agreement(
     db: DbSession,
     contract: UploadFile = File(...),
     deposit: str = Form(..., max_length=20),
+    payment_type: str = Form("", max_length=120),
 ) -> ApplicationDetail:
     """Staff: upload the contract PDF and set the deposit; the app creates the invoice."""
     app = await apps.get_application(db, app_id, staff)
     return apps.to_detail(
-        await cases.send_agreement(db, app, staff, contract=contract, deposit=deposit)
+        await cases.send_agreement(
+            db, app, staff, contract=contract, deposit=deposit, payment_type=payment_type
+        )
     )
 
 
@@ -101,7 +104,7 @@ async def finalize(
 ) -> ApplicationDetail:
     """Staff: every required document is approved; send the final invoice."""
     app = await apps.get_application(db, app_id, staff)
-    return apps.to_detail(await cases.finalize(db, app, staff, data.amount))
+    return apps.to_detail(await cases.finalize(db, app, staff, data.amount, data.payment_type))
 
 
 @router.post("/applications/{app_id}/confirmation", response_model=ApplicationDetail)

@@ -129,7 +129,7 @@ async def test_full_visa_case_journey(client: AsyncClient, ctx):
     resp = await client.post(
         f"{case}/agreement",
         files={"contract": ("contract.pdf", make_pdf(), "application/pdf")},
-        data={"deposit": "1,800"},
+        data={"deposit": "1,800", "payment_type": "  Half payment of   visa application fee "},
         headers=ctx["staff"],
     )
     detail = resp.json()
@@ -141,6 +141,10 @@ async def test_full_visa_case_journey(client: AsyncClient, ctx):
         client, ctx["cust"], f"{API}/invoices/{deposit['id']}/download-url"
     )
     assert invoice_pdf.startswith(b"%PDF")
+    assert deposit["payment_type"] == "Half payment of visa application fee"
+    assert deposit["description"].startswith("Half payment of visa application fee")
+    text = PdfReader(io.BytesIO(invoice_pdf)).pages[0].extract_text()
+    assert "Payment type: Half payment of visa application fee" in text
 
     # Still locked: the rest of the checklist.
     locked = await client.post(
@@ -209,6 +213,8 @@ async def test_full_visa_case_journey(client: AsyncClient, ctx):
     detail = resp.json()
     assert detail["stage"] == "final_payment"
     final = next(i for i in detail["invoices"] if i["kind"] == "final")
+    assert final["payment_type"] is None  # none chosen: the default label is used
+    assert final["description"].startswith("Final payment")
 
     await _pay(client, ctx, final["id"])
     assert (await client.get(case, headers=ctx["cust"])).json()["stage"] == "confirmation_pending"

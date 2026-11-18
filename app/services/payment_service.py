@@ -80,6 +80,7 @@ async def create_checkout(
     amount_cents: int,
     currency: str,
     customer_email: str,
+    title: str | None = None,
 ) -> CheckoutResult:
     if backend() == "test":
         token = test_token(invoice_id)
@@ -100,7 +101,10 @@ async def create_checkout(
                 "price_data": {
                     "currency": currency.lower(),
                     "unit_amount": amount_cents,
-                    "product_data": {"name": f"Invoice {number}", "description": description},
+                    "product_data": {
+                        "name": f"{title} - Invoice {number}" if title else f"Invoice {number}",
+                        "description": description,
+                    },
                 },
             }
         ],

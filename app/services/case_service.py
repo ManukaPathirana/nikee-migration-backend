@@ -173,6 +173,7 @@ async def _render_invoice(db: AsyncSession, app: VisaApplication, inv: Invoice) 
         case_ref=app.ref_no or "",
         visa_type=app.visa_type.name,
         description=inv.description,
+        payment_type=inv.payment_type or invoice_label(inv.kind),
         amount_cents=inv.amount_cents,
         currency=inv.currency,
         paid_at=inv.paid_at,
@@ -183,16 +184,33 @@ async def _render_invoice(db: AsyncSession, app: VisaApplication, inv: Invoice) 
     inv.file_key = key
 
 
+def invoice_label(kind: str) -> str:
+    return "Deposit (50%)" if kind == InvoiceKind.DEPOSIT.value else "Final payment"
+
+
+def clean_payment_type(value: str | None) -> str | None:
+    text = " ".join((value or "").split())  # one line, single spaces
+    if text and len(text) < 3:
+        raise BadRequest("Payment type is too short", code="invalid_payment_type")
+    return text or None
+
+
 async def _create_invoice(
-    db: AsyncSession, app: VisaApplication, kind: InvoiceKind, cents: int, user: User
+    db: AsyncSession,
+    app: VisaApplication,
+    kind: InvoiceKind,
+    cents: int,
+    user: User,
+    payment_type: str | None = None,
 ) -> Invoice:
-    label = "Deposit (50%)" if kind == InvoiceKind.DEPOSIT else "Final payment"
+    label = payment_type or invoice_label(kind.value)
     inv = Invoice(
         application_id=app.id,
         kind=kind.value,
         number=await _next_invoice_number(db),
         amount_cents=cents,
         currency=settings.currency,
+        payment_type=payment_type,
         description=f"{label} · {app.visa_type.name} visa services · Case {app.ref_no}",
         status=InvoiceStatus.UNPAID.value,
         created_by=user.id,
@@ -288,14 +306,21 @@ async def assign(
 
 
 async def send_agreement(
-    db: AsyncSession, app: VisaApplication, staff: User, *, contract: UploadFile, deposit: str
+    db: AsyncSession,
+    app: VisaApplication,
+    staff: User,
+    *,
+    contract: UploadFile,
+    deposit: str,
+    payment_type: str | None = None,
 ) -> VisaApplication:
     require_handler(app, staff)
     require_stage(app, CaseStage.CONTRACT_PENDING)
     cents = parse_amount(deposit)
+    kind_label = clean_payment_type(payment_type)
     data, name = await _read_pdf(contract, "contract")
     await _store_file(db, app, CaseFileKind.CONTRACT, data, name, staff)
-    inv = await _create_invoice(db, app, InvoiceKind.DEPOSIT, cents, staff)
+    inv = await _create_invoice(db, app, InvoiceKind.DEPOSIT, cents, staff, kind_label)
     set_stage(app, CaseStage.AGREEMENT)
     audit(
         db,
@@ -303,7 +328,7 @@ async def send_agreement(
         action="case.send_agreement",
         entity="visa_application",
         entity_id=app.id,
-        meta={"invoice": inv.number, "amount_cents": cents},
+        meta={"invoice": inv.number, "amount_cents": cents, "payment_type": inv.payment_type},
     )
     _tell(
         db,
@@ -502,6 +527,7 @@ async def checkout(db: AsyncSession, inv: Invoice, app: VisaApplication, custome
     result = await payment_service.create_checkout(
         invoice_id=inv.id,
         number=inv.number,
+        title=inv.payment_type or invoice_label(inv.kind),
         description=inv.description,
         amount_cents=inv.amount_cents,
         currency=inv.currency,
@@ -568,7 +594,11 @@ async def confirm_payment(db: AsyncSession, inv: Invoice) -> bool:
 
 
 async def finalize(
-    db: AsyncSession, app: VisaApplication, staff: User, final_amount: str
+    db: AsyncSession,
+    app: VisaApplication,
+    staff: User,
+    final_amount: str,
+    payment_type: str | None = None,
 ) -> VisaApplication:
     require_handler(app, staff)
     require_stage(app, CaseStage.DOCUMENTS)
@@ -585,7 +615,8 @@ async def finalize(
             code="documents_not_approved",
         )
     cents = parse_amount(final_amount)
-    inv = await _create_invoice(db, app, InvoiceKind.FINAL, cents, staff)
+    kind_label = clean_payment_type(payment_type)
+    inv = await _create_invoice(db, app, InvoiceKind.FINAL, cents, staff, kind_label)
     set_stage(app, CaseStage.FINAL_PAYMENT)
     audit(
         db,
@@ -593,7 +624,7 @@ async def finalize(
         action="case.finalize",
         entity="visa_application",
         entity_id=app.id,
-        meta={"invoice": inv.number, "amount_cents": cents},
+        meta={"invoice": inv.number, "amount_cents": cents, "payment_type": inv.payment_type},
     )
     _tell(
         db,
