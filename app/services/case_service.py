@@ -195,6 +195,10 @@ def clean_payment_type(value: str | None) -> str | None:
     return text or None
 
 
+def _describe(app: VisaApplication, label: str) -> str:
+    return f"{label} · {app.visa_type.name} visa services · Case {app.ref_no}"
+
+
 async def _create_invoice(
     db: AsyncSession,
     app: VisaApplication,
@@ -211,7 +215,7 @@ async def _create_invoice(
         amount_cents=cents,
         currency=settings.currency,
         payment_type=payment_type,
-        description=f"{label} · {app.visa_type.name} visa services · Case {app.ref_no}",
+        description=_describe(app, label),
         status=InvoiceStatus.UNPAID.value,
         created_by=user.id,
         created_at=utcnow(),
@@ -519,11 +523,32 @@ async def get_invoice(
     return inv, app
 
 
-async def checkout(db: AsyncSession, inv: Invoice, app: VisaApplication, customer: User) -> str:
+async def checkout(
+    db: AsyncSession,
+    inv: Invoice,
+    app: VisaApplication,
+    customer: User,
+    payment_type: str | None = None,
+) -> str:
+    """Starts a checkout. The customer may first say what the payment is for (saved on the invoice
+    and printed on its PDF)."""
     if app.customer_id != customer.id:
         raise Forbidden("Only the applicant can pay this invoice")
     if inv.status != InvoiceStatus.UNPAID.value:
         raise BadRequest("This invoice is already paid", code="already_paid")
+    chosen = clean_payment_type(payment_type)
+    if chosen and chosen != inv.payment_type:
+        inv.payment_type = chosen
+        inv.description = _describe(app, chosen)
+        await _render_invoice(db, app, inv)
+        audit(
+            db,
+            actor_id=customer.id,
+            action="invoice.payment_type",
+            entity="invoice",
+            entity_id=inv.id,
+            meta={"number": inv.number, "payment_type": chosen},
+        )
     result = await payment_service.create_checkout(
         invoice_id=inv.id,
         number=inv.number,

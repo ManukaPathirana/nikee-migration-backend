@@ -179,5 +179,11 @@ class AmountIn(BaseModel):
     )
 
 
+class CheckoutIn(BaseModel):
+    payment_type: str = Field(
+        "", max_length=120, description="What the customer is paying for; empty = keep it"
+    )
+
+
 class CheckoutOut(BaseModel):
     url: str  # open in a browser tab; the customer returns to the app afterwards

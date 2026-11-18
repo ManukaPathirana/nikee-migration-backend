@@ -75,8 +75,14 @@ async def _case(client: AsyncClient, ctx: dict) -> dict:
     return app | {"req": ids}
 
 
-async def _pay(client: AsyncClient, ctx: dict, invoice_id: str) -> None:
-    resp = await client.post(f"{API}/invoices/{invoice_id}/checkout", headers=ctx["cust"])
+async def _pay(
+    client: AsyncClient, ctx: dict, invoice_id: str, payment_type: str | None = None
+) -> None:
+    resp = await client.post(
+        f"{API}/invoices/{invoice_id}/checkout",
+        json={"payment_type": payment_type} if payment_type else None,
+        headers=ctx["cust"],
+    )
     assert resp.status_code == 200, resp.text
     path = resp.json()["url"].split("http://localhost:8000", 1)[-1]
     page = await client.get(path)
@@ -216,7 +222,22 @@ async def test_full_visa_case_journey(client: AsyncClient, ctx):
     assert final["payment_type"] is None  # none chosen: the default label is used
     assert final["description"].startswith("Final payment")
 
-    await _pay(client, ctx, final["id"])
+    # The customer says what they are paying for; it is saved and printed on the invoice.
+    short = await client.post(
+        f"{API}/invoices/{final['id']}/checkout", json={"payment_type": "x"}, headers=ctx["cust"]
+    )
+    assert short.json()["error"]["code"] == "invalid_payment_type"
+    await _pay(client, ctx, final["id"], "Full payment of visa application fee")
+    final = next(
+        i
+        for i in (await client.get(case, headers=ctx["cust"])).json()["invoices"]
+        if i["kind"] == "final"
+    )
+    assert final["payment_type"] == "Full payment of visa application fee"
+    assert final["description"].startswith("Full payment of visa application fee")
+    final_pdf = await _download(client, ctx["cust"], f"{API}/invoices/{final['id']}/download-url")
+    text = PdfReader(io.BytesIO(final_pdf)).pages[0].extract_text()
+    assert "Payment type: Full payment of visa application fee" in text and "PAID" in text
     assert (await client.get(case, headers=ctx["cust"])).json()["stage"] == "confirmation_pending"
 
     # Final application + data confirmation; customer signs; staff completes.

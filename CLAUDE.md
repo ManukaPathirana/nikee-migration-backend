@@ -166,7 +166,8 @@ confirmation -> confirmation_review -> completed (or withdrawn). `waiting_on` sa
   `/agreement/approve|recall`, `/finalize` (final invoice), `/confirmation` (final application +
   data confirmation PDFs), `/confirmation/recall`, `/complete`. Staff see only their own cases.
 - Invoices (`NM-INV-<year>-NNNN`) are generated PDFs. Staff set `payment_type` (preset or typed,
-  e.g. "Consultation Fee") on `/agreement` and `/finalize`; it is printed on the PDF and used as the
+  e.g. "Consultation Fee") on `/agreement` and `/finalize`, and the customer can change it when paying
+  (`POST /invoices/{id}/checkout` body `{"payment_type"}`, PDF re-rendered); it is printed on the PDF and used as the
   checkout title (empty = "Deposit (50%)" / "Final payment"). `POST /invoices/{id}/checkout` returns a URL:
   Stripe Checkout (AUD) when `PAYMENTS_BACKEND=stripe` + `STRIPE_SECRET_KEY`, else a built-in test
   page (never in production). Payments are confirmed by the webhook
