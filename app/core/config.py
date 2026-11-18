@@ -2,6 +2,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BASE_DIR = Path(__file__).resolve().parents[2]
@@ -82,6 +83,28 @@ class Settings(BaseSettings):
     currency: str = "AUD"
     # Public address of this API; payment pages send customers back here.
     public_api_url: str = "http://localhost:8000"
+
+    @field_validator(
+        "app_env", "storage_backend", "payments_backend", "email_backend", mode="before"
+    )
+    @classmethod
+    def _tidy_choice(cls, v: object) -> object:
+        """Dashboard-pasted values often carry spaces, quotes or capitals ("Stripe ")."""
+        return v.strip().strip("\"'").strip().lower() if isinstance(v, str) else v
+
+    @field_validator(
+        "stripe_secret_key",
+        "stripe_webhook_secret",
+        "blob_read_write_token",
+        "public_api_url",
+        mode="before",
+    )
+    @classmethod
+    def _tidy_secret(cls, v: object) -> object:
+        if not isinstance(v, str):
+            return v
+        v = v.strip().strip("\"'").strip()
+        return v.rstrip("/") if v.startswith("http") else v
 
     @property
     def is_test(self) -> bool:
