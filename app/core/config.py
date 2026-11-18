@@ -61,7 +61,8 @@ class Settings(BaseSettings):
     fcm_credentials_file: str = ""
 
     # Storage
-    storage_backend: Literal["local", "s3"] = "local"
+    # "local" switches to "blob" by itself when BLOB_READ_WRITE_TOKEN is set (Vercel Blob store).
+    storage_backend: Literal["local", "s3", "blob"] = "local"
     local_storage_dir: str = "./storage"
     signed_url_expire_seconds: int = 300
     max_upload_bytes: int = 10 * 1024 * 1024
@@ -70,6 +71,8 @@ class Settings(BaseSettings):
     s3_access_key_id: str = ""
     s3_secret_access_key: str = ""
     s3_region: str = ""
+    # Vercel Blob (private store). Vercel adds this when the store is connected to the project.
+    blob_read_write_token: str = ""
 
     # Payments. "test" shows a built-in checkout page so the flow works without a gateway
     # account (never in production); "stripe" uses Stripe Checkout in AUD.

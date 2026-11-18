@@ -15,8 +15,9 @@ FastAPI API for the Nikee Migrations mobile platform (customers, staff, admin).
   Local dev uses `file`; open the newest `.eml` in `dev_mail/` to read OTP codes and invite links.
   Templates: `app/templates/email/*.html` (extend `base.html`). Send only via `job_queue.send_email(...)`.
 - Storage: local filesystem adapter in dev, S3-compatible (boto3, path-style + SigV4) in prod;
-  private files, short-lived signed URLs. Production on Vercel must use `STORAGE_BACKEND=s3`
-  (Supabase Storage bucket): its disk is read-only, so local writes fail with 503
+  or a private Vercel Blob store (`BlobStorage`, plain httpx; `BLOB_READ_WRITE_TOKEN` set = blob);
+  private files, short-lived signed URLs (blob and local stream through `/files/{token}`).
+  Production on Vercel uses the Blob store: its disk is read-only, so local writes fail with 503
   `storage_unavailable`. Vercel also rejects request bodies over 4.5 MB (the app caps files at 4 MB).
 - Rate limiting: slowapi. Calendar invites: icalendar.
 - Tests: pytest + pytest-asyncio + httpx. Lint/format: ruff + black.

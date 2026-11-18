@@ -168,8 +168,96 @@ class S3Storage:
         )
 
 
+# ---------------------------------------------------------------- vercel blob
+
+BLOB_API_URL = "https://vercel.com/api/blob"
+BLOB_API_VERSION = "13"
+
+
+class BlobFileNotFound(Exception):
+    pass
+
+
+class BlobStorage:
+    """A private Vercel Blob store, over its HTTP API.
+
+    Private blobs need the token to read, so downloads go through the same short-lived
+    signed `/files/{token}` links as local storage and the API streams the bytes.
+    """
+
+    def __init__(self, token: str) -> None:
+        # Token shape: vercel_blob_rw_<storeId>_<secret>
+        parts = token.split("_")
+        if len(parts) < 5 or not parts[3]:
+            raise ValueError("BLOB_READ_WRITE_TOKEN is not a Vercel Blob read-write token")
+        self.token = token
+        self.store_id = parts[3]
+        self.transport: Any = None  # tests swap in an httpx.MockTransport
+
+    def _client(self) -> Any:
+        import httpx
+
+        return httpx.AsyncClient(timeout=30, transport=self.transport)
+
+    def _headers(self) -> dict[str, str]:
+        return {
+            "authorization": f"Bearer {self.token}",
+            "x-api-version": BLOB_API_VERSION,
+            "x-vercel-blob-store-id": self.store_id,
+        }
+
+    def url_for(self, key: str) -> str:
+        return f"https://{self.store_id}.private.blob.vercel-storage.com/{key}"
+
+    async def save(self, key: str, data: bytes, content_type: str) -> None:
+        import httpx
+
+        headers = {
+            **self._headers(),
+            "x-vercel-blob-access": "private",
+            "x-content-type": content_type,
+            "x-add-random-suffix": "0",
+            "x-allow-overwrite": "1",
+        }
+        try:
+            async with self._client() as client:
+                resp = await client.put(
+                    f"{BLOB_API_URL}/", params={"pathname": key}, content=data, headers=headers
+                )
+            resp.raise_for_status()
+        except httpx.HTTPError as e:
+            detail = e.response.text[:300] if isinstance(e, httpx.HTTPStatusError) else ""
+            logger.error("blob upload failed for %s: %s %s", key, e, detail)
+            raise StorageUnavailable() from e
+
+    async def delete(self, key: str) -> None:
+        async with self._client() as client:
+            resp = await client.post(
+                f"{BLOB_API_URL}/delete",
+                json={"urls": [self.url_for(key)]},
+                headers=self._headers(),
+            )
+        if resp.is_error:
+            logger.warning("blob delete failed for %s: %s", key, resp.status_code)
+
+    async def read(self, key: str) -> bytes:
+        async with self._client() as client:
+            resp = await client.get(
+                self.url_for(key), headers={"authorization": f"Bearer {self.token}"}
+            )
+        if resp.status_code == 404:
+            raise BlobFileNotFound(key)
+        resp.raise_for_status()
+        return resp.content
+
+    async def download_url(self, key: str, filename: str, content_type: str) -> str:
+        return f"{settings.api_v1_prefix}/files/{_sign_file_token(key, filename, content_type)}"
+
+
 @lru_cache
 def get_storage() -> Storage:
     if settings.storage_backend == "s3":
         return S3Storage()
+    if settings.storage_backend == "blob" or settings.blob_read_write_token:
+        return BlobStorage(settings.blob_read_write_token)
     return LocalStorage(settings.resolve_path(settings.local_storage_dir))

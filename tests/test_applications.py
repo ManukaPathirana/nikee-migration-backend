@@ -243,3 +243,53 @@ async def test_old_status_endpoint_only_rejects(client: AsyncClient, visa, custo
     resp = await client.post(url, json={"status": "rejected"}, headers=team_admin)
     assert resp.status_code == 200, resp.text
     assert resp.json()["stage"] == "withdrawn"
+
+
+async def test_upload_and_download_via_vercel_blob(
+    client: AsyncClient, visa, customer, monkeypatch
+):
+    """With BLOB_READ_WRITE_TOKEN set, files go to a private Vercel Blob store."""
+    import httpx
+
+    from app.core.config import settings
+    from app.services import storage_service
+
+    blobs: dict[str, bytes] = {}
+    calls: list[httpx.Request] = []
+
+    def fake_blob_api(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        assert request.headers["authorization"] == "Bearer vercel_blob_rw_store123_secret"
+        if request.method == "PUT":
+            assert request.headers["x-vercel-blob-access"] == "private"
+            blobs[request.url.params["pathname"]] = request.content
+            return httpx.Response(200, json={"url": "x"})
+        if request.url.host == "store123.private.blob.vercel-storage.com":
+            key = request.url.path.lstrip("/")
+            return httpx.Response(200, content=blobs[key]) if key in blobs else httpx.Response(404)
+        return httpx.Response(404)
+
+    monkeypatch.setattr(settings, "blob_read_write_token", "vercel_blob_rw_store123_secret")
+    storage_service.get_storage.cache_clear()
+    try:
+        storage = storage_service.get_storage()
+        assert isinstance(storage, storage_service.BlobStorage)
+        storage.transport = httpx.MockTransport(fake_blob_api)
+
+        app = await _new_app(client, customer, visa)
+        passport = app["checklist"][0]["requirement"]["id"]
+        resp = await _upload(client, customer, app["id"], passport)
+        assert resp.status_code == 201, resp.text
+        assert list(blobs.values()) == [PDF]
+
+        doc_id = resp.json()["id"]
+        url = (
+            await client.get(f"/api/v1/documents/{doc_id}/download-url", headers=customer)
+        ).json()["url"]
+        file = await client.get(url)
+        assert file.status_code == 200
+        assert file.content == PDF
+        assert file.headers["content-type"] == "application/pdf"
+        assert file.headers["content-disposition"].startswith("inline;")
+    finally:
+        storage_service.get_storage.cache_clear()
