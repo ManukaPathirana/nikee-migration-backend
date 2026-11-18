@@ -3,6 +3,7 @@
 import asyncio
 import base64
 import logging
+import os
 import re
 import smtplib
 from datetime import datetime
@@ -15,9 +16,62 @@ import httpx
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from app.core.config import settings
+from app.core.errors import AppError
 from app.core.security import utcnow
 
 logger = logging.getLogger(__name__)
+
+
+class EmailUnavailable(AppError):
+    """A code email (sign-up, password reset) could not be sent, so the user would wait forever."""
+
+    status_code = 503
+    code = "email_unavailable"
+
+    def __init__(self) -> None:
+        super().__init__(
+            "We couldn't send the email right now. Please try again in a minute or contact us."
+        )
+
+
+def _serverless() -> bool:
+    return bool(os.getenv("VERCEL"))
+
+
+def delivery_status() -> dict[str, Any]:
+    """How email is sent, and whether the mail server accepts our login. Never returns secrets;
+    nothing is sent."""
+    backend = settings.email_backend
+    out: dict[str, Any] = {
+        "backend": backend,
+        "email_from": settings.email_from,
+        "smtp_host": settings.smtp_host,
+        "smtp_port": settings.smtp_port,
+        "smtp_user_set": bool(settings.smtp_user),
+        "smtp_password_set": bool(settings.smtp_password),
+        "resend_key_set": bool(settings.resend_api_key),
+        "delivers": backend in ("smtp", "resend"),
+        "ok": False,
+        "problem": None,
+    }
+    if backend in ("console", "file", "memory"):
+        out["problem"] = f"EMAIL_BACKEND={backend} only logs emails; set it to smtp or resend"
+        return out
+    if backend == "resend":
+        out["ok"] = bool(settings.resend_api_key)
+        out["problem"] = None if out["ok"] else "RESEND_API_KEY is empty"
+        return out
+    try:
+        with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=20) as smtp:
+            if settings.smtp_use_tls:
+                smtp.starttls()
+            if settings.smtp_user:
+                smtp.login(settings.smtp_user, settings.smtp_password)
+        out["ok"] = True
+    except Exception as e:  # report the kind of failure only
+        out["problem"] = f"SMTP login failed: {type(e).__name__}: {str(e)[:150]}"
+    return out
+
 
 TEMPLATES_DIR = Path(__file__).resolve().parents[1] / "templates" / "email"
 _env = Environment(loader=FileSystemLoader(TEMPLATES_DIR), autoescape=select_autoescape(["html"]))
@@ -120,6 +174,11 @@ async def send_email(
             }
         )
         return
+
+    if backend in ("console", "file") and _serverless():
+        # On Vercel these never reach anyone (and the disk is read-only).
+        logger.error("EMAIL_BACKEND=%s on a serverless host: email to %s not sent", backend, to)
+        raise RuntimeError(f"EMAIL_BACKEND={backend} cannot deliver email here")
 
     if backend == "console":
         logger.info("EMAIL to=%s subject=%s\n%s", recipients, subject, _html_to_text(html))

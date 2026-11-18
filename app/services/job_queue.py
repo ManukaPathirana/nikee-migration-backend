@@ -72,7 +72,28 @@ async def send_email(
     template: str,
     context: dict[str, Any],
     attachments: list[Attachment] | None = None,
+    *,
+    critical: bool = False,
 ) -> None:
+    """critical=True (codes the user is waiting for): without a queue, send now and raise
+    EmailUnavailable if delivery fails, so the app can say so instead of waiting forever."""
+    if critical and not settings.redis_url:
+        from app.services.email_service import EmailUnavailable
+        from app.workers import JOB_FUNCTIONS
+
+        try:
+            await JOB_FUNCTIONS["send_email"](
+                {},
+                to=to,
+                subject=subject,
+                template=template,
+                context=context,
+                attachments=attachments,
+            )
+        except Exception as e:
+            logger.exception("Email %r to %s failed", subject, to)
+            raise EmailUnavailable() from e
+        return
     await enqueue(
         "send_email",
         to=to,

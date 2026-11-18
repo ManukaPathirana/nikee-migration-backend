@@ -38,6 +38,18 @@ from app.services.audit_service import audit
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
+
+@router.get("/email-check")
+async def email_check(_: SuperAdminUser) -> dict:
+    """Super admin: how email is sent and whether the mail server accepts the login.
+    Sends nothing and returns no secrets."""
+    from starlette.concurrency import run_in_threadpool
+
+    from app.services.email_service import delivery_status
+
+    return await run_in_threadpool(delivery_status)
+
+
 Params = Annotated[PageParams, Depends(page_params)]
 Search = Annotated[str | None, Query(max_length=100)]
 # Super admin only; ignored for team admins (always their own team).

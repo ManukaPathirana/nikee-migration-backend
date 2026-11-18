@@ -178,6 +178,7 @@ async def _send_verification_email(user: User, code: str) -> None:
         subject="Your Nikee Migrations verification code",
         template="verify_email.html",
         context={"name": user.full_name, "code": code, "minutes": settings.otp_expire_minutes},
+        critical=True,
     )
 
 
@@ -277,6 +278,7 @@ async def forgot_password(db: AsyncSession, email: str) -> None:
         subject="Reset your Nikee Migrations password",
         template="reset_password.html",
         context={"name": user.full_name, "code": code, "minutes": settings.otp_expire_minutes},
+        critical=True,
     )
 
 

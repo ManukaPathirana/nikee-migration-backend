@@ -235,3 +235,45 @@ async def test_change_password_signs_out_other_sessions(client: AsyncClient, db:
 async def test_health(client: AsyncClient):
     resp = await client.get("/api/v1/health")
     assert resp.json() == {"status": "ok", "database": "ok"}
+
+
+async def test_code_email_failure_is_reported(client: AsyncClient, monkeypatch):
+    """If the verification email can't be sent, the app hears about it instead of waiting."""
+
+    async def broken(*_args, **_kwargs):
+        raise OSError("mail server unreachable")
+
+    monkeypatch.setattr(email_service, "send_email", broken)
+    body = {"email": "nomail@example.com", "password": PASSWORD, "full_name": "No Mail"}
+    resp = await client.post(f"{API}/register", json=body)
+    assert resp.status_code == 503
+    assert resp.json()["error"]["code"] == "email_unavailable"
+    # The sign-up was kept: once mail works again, asking for a new code sends it.
+    monkeypatch.undo()
+    resp = await client.post(f"{API}/resend-verification", json={"email": "nomail@example.com"})
+    assert resp.status_code < 300, resp.text
+    assert last_email("nomail@example.com")["context"]["code"]
+
+
+async def test_console_email_is_refused_on_serverless(monkeypatch):
+    import pytest
+
+    from app.core.config import settings
+
+    monkeypatch.setenv("VERCEL", "1")
+    monkeypatch.setattr(settings, "email_backend", "console")
+    with pytest.raises(RuntimeError):
+        await email_service.send_email("x@example.com", "Hi", "<p>Hi</p>")
+
+
+async def test_email_check_is_super_admin_only(client: AsyncClient, db: AsyncSession):
+    await create_user(db, email="boss@example.com", role=UserRole.SUPER_ADMIN)
+    await create_user(db, email="cust@example.com")
+    cust = auth_header(await login(client, "cust@example.com"))
+    assert (await client.get("/api/v1/admin/email-check", headers=cust)).status_code == 403
+    boss = auth_header(await login(client, "boss@example.com"))
+    resp = await client.get("/api/v1/admin/email-check", headers=boss)
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["backend"] == "memory" and body["ok"] is False and body["problem"]
+    assert "smtp_password" not in body
