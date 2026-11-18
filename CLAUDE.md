@@ -135,8 +135,8 @@ Tests use the pooled engine (all tests share one event loop) and cheap argon2 se
   `applications/{app_id}/{uuid}.{ext}`. Local downloads use `/api/v1/files/{signed-token}` (relative URL).
 
 ## Teams, super admin and work hours
-- Roles: `customer`, `staff`, `admin` (= team admin), `super_admin`. The 7 teams ARE the visa types
-  (assessment, appeal, employer, family, student, skilled, temporary). Staff and team admins have
+- Roles: `customer`, `staff`, `admin` (= team admin), `super_admin`. The 8 teams ARE the visa types
+  (assessment, appeal, employer, family, student, skilled, temporary, general). Staff and team admins have
   exactly one `users.team_id` (DB check constraint). Every inquiry has `visa_type_id` (its team).
 - Scoping helpers: `core/permissions.py` (`team_scope`, `can_access_team`, `require_team`). Team
   admins/staff only see their team's inquiries, applications, meetings and reviews (other teams: 404).

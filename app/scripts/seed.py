@@ -1,6 +1,6 @@
 """Idempotent seed: `python -m app.scripts.seed`.
 
-Creates the super admin (from .env), the 7 teams (visa types) with document requirements
+Creates the super admin (from .env), the 8 teams (visa types) with document requirements
 and the company info row. In development it also adds one team admin per team
 (admin.<team>@example.com), a demo staff member in Student and a demo customer.
 """
@@ -30,8 +30,9 @@ logger = logging.getLogger("seed")
 DEMO_STAFF_EMAIL = "demo.staff@example.com"
 DEMO_CUSTOMER_EMAIL = "demo.customer@example.com"
 
-# The 7 teams. (name, slug, icon, description, [(requirement, description, mandatory)])
-# Keep in step with migration 9b8b3ac0fe01, which renames/adds these on existing databases.
+# The 8 teams. (name, slug, icon, description, [(requirement, description, mandatory)])
+# Keep in step with migrations 9b8b3ac0fe01 and e4c1a9d2b7f3 (General), which rename/add these
+# on existing databases.
 PASSPORT = ("Passport (bio page)", "Clear scan of the photo page, valid 6+ months.", True)
 PHOTO = ("Passport-size photo", "Recent photo on a plain light background.", True)
 # Intake documents: uploaded before the contract; everything else unlocks after the deposit.
@@ -152,6 +153,17 @@ VISA_TYPES: list[tuple[str, str, str, str, list[tuple[str, str, bool]]]] = [
             ("Employment / leave letter", "Letter from employer confirming approved leave.", True),
             ("Invitation letter", "From the person or company you're visiting, if any.", False),
             PHOTO,
+        ],
+    ),
+    (
+        "General",
+        "general",
+        "public",
+        "General visa and migration advice, and cases that don't fit another team.",
+        [
+            PASSPORT,
+            ("Supporting documents", "Any other documents your consultant asks for.", False),
+            (PHOTO[0], PHOTO[1], False),
         ],
     ),
 ]
