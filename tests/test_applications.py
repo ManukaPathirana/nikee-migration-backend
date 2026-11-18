@@ -166,6 +166,24 @@ async def test_upload_rejects_bad_files(client: AsyncClient, visa, customer, mon
     assert resp.json()["error"]["code"] == "file_too_large"
 
 
+async def test_upload_reports_unwritable_storage(client: AsyncClient, visa, customer, monkeypatch):
+    """A read-only disk (e.g. Vercel without STORAGE_BACKEND=s3) gives a clear 503, not a 500."""
+    from pathlib import Path
+
+    app = await _new_app(client, customer, visa)
+    passport = app["checklist"][0]["requirement"]["id"]
+
+    def read_only(*_args, **_kwargs):
+        raise OSError(30, "Read-only file system")
+
+    monkeypatch.setattr(Path, "write_bytes", read_only)
+    resp = await _upload(client, customer, app["id"], passport)
+    assert resp.status_code == 503
+    assert resp.json()["error"]["code"] == "storage_unavailable"
+    detail = await client.get(f"/api/v1/applications/{app['id']}", headers=customer)
+    assert detail.json()["checklist"][0]["document"] is None  # nothing half-saved
+
+
 async def test_download_url_and_access_control(
     client: AsyncClient, db, visa, customer, staff, team_admin
 ):

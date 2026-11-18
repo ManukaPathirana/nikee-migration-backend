@@ -9,6 +9,7 @@ starting with "/" (local) that clients join with their API origin.
 """
 
 import asyncio
+import logging
 from datetime import timedelta
 from functools import lru_cache
 from pathlib import Path
@@ -17,7 +18,21 @@ from typing import Any, Protocol
 from jose import JWTError, jwt
 
 from app.core.config import settings
+from app.core.errors import AppError
 from app.core.security import utcnow
+
+logger = logging.getLogger(__name__)
+
+
+class StorageUnavailable(AppError):
+    """The file store can't be written to (misconfigured, or a read-only disk)."""
+
+    status_code = 503
+    code = "storage_unavailable"
+
+    def __init__(self) -> None:
+        super().__init__("We couldn't save the file right now. Please try again later.")
+
 
 ALLOWED_TYPES = {
     "application/pdf": ".pdf",
@@ -83,7 +98,12 @@ class LocalStorage:
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(data)
 
-        await asyncio.to_thread(_write)
+        try:
+            await asyncio.to_thread(_write)
+        except OSError as e:
+            # e.g. serverless hosts (Vercel) have a read-only disk: STORAGE_BACKEND=s3 is needed.
+            logger.error("local storage write failed for %s: %s", key, e)
+            raise StorageUnavailable() from e
 
     async def delete(self, key: str) -> None:
         await asyncio.to_thread(self.path_for(key).unlink, True)
@@ -101,6 +121,7 @@ class LocalStorage:
 class S3Storage:
     def __init__(self) -> None:
         import boto3
+        from botocore.config import Config
 
         self.bucket = settings.s3_bucket
         self.client = boto3.client(
@@ -109,16 +130,22 @@ class S3Storage:
             aws_access_key_id=settings.s3_access_key_id or None,
             aws_secret_access_key=settings.s3_secret_access_key or None,
             region_name=settings.s3_region or None,
+            # Path-style + SigV4: works with AWS and S3-compatible hosts (Supabase, R2, MinIO).
+            config=Config(signature_version="s3v4", s3={"addressing_style": "path"}),
         )
 
     async def save(self, key: str, data: bytes, content_type: str) -> None:
-        await asyncio.to_thread(
-            self.client.put_object,
-            Bucket=self.bucket,
-            Key=key,
-            Body=data,
-            ContentType=content_type,
-        )
+        try:
+            await asyncio.to_thread(
+                self.client.put_object,
+                Bucket=self.bucket,
+                Key=key,
+                Body=data,
+                ContentType=content_type,
+            )
+        except Exception as e:  # botocore errors: bad keys, missing bucket, network
+            logger.error("s3 upload failed for %s: %s", key, e)
+            raise StorageUnavailable() from e
 
     async def delete(self, key: str) -> None:
         await asyncio.to_thread(self.client.delete_object, Bucket=self.bucket, Key=key)
