@@ -206,6 +206,8 @@ async def test_full_visa_case_journey(client: AsyncClient, ctx):
     )
     assert resp.status_code == 201
     assert (await client.get(case, headers=ctx["staff"])).json()["waiting_on"] == "staff"
+    inbox = (await client.get(f"{API}/notifications", headers=ctx["staff"])).json()["items"]
+    assert any(n["type"] == "document_uploaded" for n in inbox)  # staff hear about uploads
     resp = await client.post(f"{case}/finalize", json={"amount": "1800"}, headers=ctx["staff"])
     assert resp.json()["error"]["code"] == "documents_not_approved"
     for item in (await client.get(case, headers=ctx["staff"])).json()["checklist"]:

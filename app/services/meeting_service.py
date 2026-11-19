@@ -482,14 +482,15 @@ async def send_due_reminders(db: AsyncSession, now: datetime | None = None) -> i
                         message="Here are the details.",
                     ),
                 )
-            notify(
-                db,
-                user_id=meeting.customer_id,
-                type="meeting_reminder",
-                title=f"Meeting {phrase}",
-                body=fmt_slot(meeting.confirmed_slot.start_at, meeting.confirmed_slot.end_at),
-                data={"meeting_id": str(meeting.id)},
-            )
+            for person_id in (meeting.customer_id, meeting.staff_id):
+                notify(
+                    db,
+                    user_id=person_id,
+                    type="meeting_reminder",
+                    title=f"Meeting {phrase}",
+                    body=fmt_slot(meeting.confirmed_slot.start_at, meeting.confirmed_slot.end_at),
+                    data={"meeting_id": str(meeting.id)},
+                )
             await db.commit()
             sent += 1
     return sent

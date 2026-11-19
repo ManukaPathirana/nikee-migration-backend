@@ -366,6 +366,15 @@ async def withdraw_application(db: AsyncSession, app: VisaApplication, user: Use
     if stage_of(app) in (CaseStage.COMPLETED, CaseStage.WITHDRAWN):
         raise BadRequest("This application can no longer be withdrawn", code="invalid_status")
     set_stage(app, CaseStage.WITHDRAWN)
+    if app.assigned_staff_id is not None:
+        notify(
+            db,
+            user_id=app.assigned_staff_id,
+            type="case_update",
+            title=f"{app.ref_no or 'A case'} was withdrawn",
+            body=f"{app.customer.full_name} withdrew their {app.visa_type.name} application.",
+            data={"application_id": str(app.id), "stage": app.stage},
+        )
     await db.commit()
 
 
@@ -379,6 +388,7 @@ async def upload_document(
 ) -> ApplicationDocument:
     _require_owner_editable(app, user)
 
+    requirement = None
     if requirement_id is not None:
         requirement = await db.get(DocumentRequirement, requirement_id)
         if requirement is None or requirement.visa_type_id != app.visa_type_id:
@@ -425,6 +435,17 @@ async def upload_document(
         size_bytes=len(data),
     )
     db.add(doc)
+    # Once the case is with its staff member, tell them there is something to review.
+    if app.assigned_staff_id is not None and stage_of(app) == CaseStage.DOCUMENTS:
+        what = requirement.name if requirement is not None else "an extra document"
+        notify(
+            db,
+            user_id=app.assigned_staff_id,
+            type="document_uploaded",
+            title=f"{app.ref_no}: new document to review",
+            body=f"{app.customer.full_name} uploaded {what}.",
+            data={"application_id": str(app.id)},
+        )
     await db.commit()
     return doc
 
