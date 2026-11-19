@@ -60,6 +60,9 @@ class Settings(BaseSettings):
     # Push notifications (Firebase Cloud Messaging). Both empty = push disabled.
     fcm_project_id: str = ""
     fcm_credentials_file: str = ""
+    # The service-account JSON itself (for hosts without files, e.g. Vercel). Its project_id is
+    # used when FCM_PROJECT_ID is empty.
+    fcm_credentials_json: str = ""
 
     # Storage
     # "local" switches to "blob" by itself when BLOB_READ_WRITE_TOKEN is set (Vercel Blob store).

@@ -3,9 +3,11 @@ from datetime import datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, status
+from pydantic import BaseModel, EmailStr
 
 from app.api.v1.company import get_company_row
 from app.core.deps import AdminUser, DbSession, SuperAdminUser
+from app.core.errors import NotFound
 from app.models import CompanyInfo, UserRole
 from app.schemas.admin import (
     ActiveIn,
@@ -37,6 +39,50 @@ from app.services import (
 from app.services.audit_service import audit
 
 router = APIRouter(prefix="/admin", tags=["admin"])
+
+
+class PushTestIn(BaseModel):
+    email: EmailStr
+
+
+@router.get("/push-check")
+async def push_check(_: SuperAdminUser, db: DbSession) -> dict:
+    """Super admin: is phone push configured, does Google accept the key, how many devices."""
+    from sqlalchemy import func, select
+    from starlette.concurrency import run_in_threadpool
+
+    from app.models import DeviceToken
+    from app.services import push_service
+
+    out = await run_in_threadpool(push_service.status)
+    out["devices"] = await db.scalar(select(func.count()).select_from(DeviceToken))
+    return out
+
+
+@router.post("/push-test")
+async def push_test(data: PushTestIn, admin: SuperAdminUser, db: DbSession) -> dict:
+    """Super admin: send a test notification (in-app + phone) to one person."""
+    from sqlalchemy import func, select
+
+    from app.models import DeviceToken, User
+    from app.services.notification_service import notify
+
+    user = await db.scalar(select(User).where(func.lower(User.email) == data.email.lower()))
+    if user is None:
+        raise NotFound("No one with that email")
+    devices = await db.scalar(
+        select(func.count()).select_from(DeviceToken).where(DeviceToken.user_id == user.id)
+    )
+    notify(
+        db,
+        user_id=user.id,
+        type="test",
+        title="Test notification",
+        body="Notifications from Nikee Migrations are working on this phone.",
+    )
+    audit(db, actor_id=admin.id, action="push.test", entity="user", entity_id=user.id)
+    await db.commit()
+    return {"devices": devices}
 
 
 @router.get("/email-check")

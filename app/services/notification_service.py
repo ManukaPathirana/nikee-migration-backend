@@ -65,6 +65,12 @@ def _queue_pushes(session: Session) -> None:
         task.add_done_callback(_tasks.discard)
 
 
+async def drain_pushes(grace_seconds: float = 10) -> None:
+    """Wait for queued push jobs (serverless hosts freeze once the response is sent)."""
+    if _tasks:
+        await asyncio.wait(list(_tasks), timeout=grace_seconds)
+
+
 @event.listens_for(Session, "after_rollback")
 def _drop_pushes(session: Session) -> None:
     session.info.pop(_PENDING_KEY, None)

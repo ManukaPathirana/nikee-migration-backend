@@ -1,6 +1,7 @@
 import asyncio
 import contextlib
 import logging
+import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -57,6 +58,17 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    if os.getenv("VERCEL"):
+
+        @app.middleware("http")
+        async def finish_pushes(request, call_next):  # type: ignore[no-untyped-def]
+            # Vercel freezes the function after the response: send queued pushes first.
+            response = await call_next(request)
+            from app.services.notification_service import drain_pushes
+
+            await drain_pushes()
+            return response
 
     app.include_router(api_router, prefix=settings.api_v1_prefix)
     return app

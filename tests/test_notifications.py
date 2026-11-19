@@ -121,3 +121,50 @@ async def test_push_disabled_by_default(client: AsyncClient, h, monkeypatch):
     await asyncio.sleep(0)
     assert push_service.is_enabled() is False
     assert calls == []
+
+
+def test_firebase_key_from_env_json(monkeypatch):
+    """On Vercel the key JSON comes from FCM_CREDENTIALS_JSON; its project_id is used."""
+    import json
+
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "fcm_project_id", "")
+    monkeypatch.setattr(settings, "fcm_credentials_file", "")
+    push_service._key_info.cache_clear()
+    try:
+        assert not push_service.is_enabled()
+        monkeypatch.setattr(settings, "fcm_credentials_json", "not json")
+        push_service._key_info.cache_clear()
+        assert not push_service.is_enabled()
+        key = {"type": "service_account", "project_id": "nikee-x", "private_key": "k"}
+        monkeypatch.setattr(settings, "fcm_credentials_json", json.dumps(key))
+        push_service._key_info.cache_clear()
+        assert push_service.is_enabled() and push_service.project_id() == "nikee-x"
+    finally:
+        push_service._key_info.cache_clear()
+
+
+async def test_super_admin_push_test(client: AsyncClient, h, db: AsyncSession, monkeypatch):
+    sent: list[tuple] = []
+
+    async def fake_send(user_id, title, body, data):
+        sent.append((user_id, title, data["type"]))
+        return 1
+
+    monkeypatch.setattr(push_service, "is_enabled", lambda: True)
+    monkeypatch.setattr(push_service, "send_to_user", fake_send)
+    await create_user(db, email="boss@example.com", role=UserRole.SUPER_ADMIN)
+    boss = auth_header(await login(client, "boss@example.com"))
+    resp = await client.post(
+        "/api/v1/admin/push-test", json={"email": "cust@example.com"}, headers=h["s1"]
+    )
+    assert resp.status_code == 403
+    resp = await client.post(
+        "/api/v1/admin/push-test", json={"email": "CUST@example.com"}, headers=boss
+    )
+    assert resp.status_code == 200, resp.text
+    await notification_service.drain_pushes()
+    assert [s[1:] for s in sent] == [("Test notification", "test")]
+    inbox = (await client.get("/api/v1/notifications", headers=h["cust"])).json()["items"]
+    assert inbox[0]["title"] == "Test notification"
