@@ -86,7 +86,9 @@ async def test_booking_confirms_and_tells_customer_and_super_admin(client: Async
     cust = (await _inbox(client, ctx["cust"]))[0]
     assert cust["title"] == "Your meeting is booked"
     assert "https://meet.example.com/abc" in cust["body"]
-    boss = (await _inbox(client, ctx["admin"]))[0]
+    boss_inbox = await _inbox(client, ctx["admin"])
+    assert any(n["type"] == "inquiry_new" for n in boss_inbox)  # super admin sees new inquiries
+    boss = boss_inbox[0]
     assert boss["type"] == "meeting_booked" and "https://meet.example.com/abc" in boss["body"]
     for address in ("cust@example.com", "s1@example.com", "admin@example.com"):
         ics = _emails_to(address)[-1]["attachments"][0]["content"].decode()
@@ -181,6 +183,8 @@ async def test_cancel_confirmed_sends_ics_cancel(client: AsyncClient, ctx):
         f"{API}/{meeting['id']}/cancel", json={"reason": "Consultant unwell"}, headers=ctx["s1"]
     )
     assert resp.json()["status"] == "cancelled"
+    cancelled = (await _inbox(client, ctx["admin"]))[0]
+    assert cancelled["type"] == "meeting_cancelled" and "free again" in cancelled["body"]
     body = _emails_to("cust@example.com")[-1]["attachments"][0]["content"].decode()
     assert "METHOD:CANCEL" in body and "SEQUENCE:1" in body
     resp = await client.post(

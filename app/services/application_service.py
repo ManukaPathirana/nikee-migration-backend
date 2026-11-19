@@ -44,7 +44,7 @@ from app.schemas.visa import (
 )
 from app.services import job_queue
 from app.services.audit_service import audit
-from app.services.notification_service import notify
+from app.services.notification_service import notify, notify_super_admins
 from app.services.storage_service import ALLOWED_TYPES, get_storage, sniff_file_type
 
 # Customers may add/replace documents only while the application is open.
@@ -357,6 +357,13 @@ async def submit_application(db: AsyncSession, app: VisaApplication, user: User)
             body=f"{app.customer.full_name} is ready. Assign a staff member.",
             data={"application_id": str(app.id)},
         )
+    await notify_super_admins(
+        db,
+        type="case_new",
+        title=f"New {app.visa_type.name} case {app.ref_no}",
+        body=f"{app.customer.full_name} sent their documents. The team admin assigns it.",
+        data={"application_id": str(app.id)},
+    )
     await db.commit()
 
 
@@ -375,6 +382,13 @@ async def withdraw_application(db: AsyncSession, app: VisaApplication, user: Use
             body=f"{app.customer.full_name} withdrew their {app.visa_type.name} application.",
             data={"application_id": str(app.id), "stage": app.stage},
         )
+    await notify_super_admins(
+        db,
+        type="case_update",
+        title=f"{app.ref_no or 'A case'} was withdrawn",
+        body=f"{app.customer.full_name} withdrew their {app.visa_type.name} application.",
+        data={"application_id": str(app.id), "stage": app.stage},
+    )
     await db.commit()
 
 

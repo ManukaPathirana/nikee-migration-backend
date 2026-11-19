@@ -48,9 +48,10 @@ async def ctx(client: AsyncClient, db: AsyncSession) -> dict:
     await create_user(db, email="other@example.com", role=UserRole.STAFF, team_id=visa.id)
     await create_user(db, email="lead@example.com", role=UserRole.ADMIN, team_id=visa.id)
     await create_user(db, email="cust@example.com", full_name="Cust Omer")
+    await create_user(db, email="boss@example.com", role=UserRole.SUPER_ADMIN)
     h = {
         k: auth_header(await login(client, f"{k}@example.com"))
-        for k in ("staff", "other", "lead", "cust")
+        for k in ("staff", "other", "lead", "cust", "boss")
     }
     return {"visa": visa, "staff_id": str(staff.id), **h}
 
@@ -175,6 +176,8 @@ async def test_full_visa_case_journey(client: AsyncClient, ctx):
 
     # Deposit paid through the test checkout -> staff reviews.
     await _pay(client, ctx, deposit["id"])
+    boss = (await client.get(f"{API}/notifications", headers=ctx["boss"])).json()["items"]
+    assert {"case_new", "payment_received"} <= {n["type"] for n in boss}
     detail = (await client.get(case, headers=ctx["cust"])).json()
     assert detail["stage"] == "agreement_review"
     assert detail["invoices"][0]["status"] == "paid"

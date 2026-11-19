@@ -48,6 +48,26 @@ def notify(
         )
 
 
+async def notify_super_admins(
+    db: AsyncSession,
+    *,
+    type: str,
+    title: str,
+    body: str | None = None,
+    data: dict[str, Any] | None = None,
+    skip: uuid.UUID | None = None,
+) -> None:
+    """The same notification for every active super admin (who oversees all teams)."""
+    from app.models import User, UserRole  # avoid an import cycle at module load
+
+    ids = await db.scalars(
+        select(User.id).where(User.role == UserRole.SUPER_ADMIN, User.is_active.is_(True))
+    )
+    for user_id in ids:
+        if user_id != skip:
+            notify(db, user_id=user_id, type=type, title=title, body=body, data=data)
+
+
 @event.listens_for(Session, "after_commit")
 def _queue_pushes(session: Session) -> None:
     pending = session.info.pop(_PENDING_KEY, None)

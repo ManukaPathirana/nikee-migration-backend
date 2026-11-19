@@ -26,7 +26,7 @@ from app.schemas.common import PageParams
 from app.schemas.inquiry import InquiryDetail
 from app.services import job_queue
 from app.services.audit_service import audit
-from app.services.notification_service import notify
+from app.services.notification_service import notify, notify_super_admins
 
 S = InquiryStatus
 
@@ -249,6 +249,13 @@ async def create_inquiry(
             body=f"{customer.full_name}: {inquiry.subject}",
             data={"inquiry_id": str(inquiry.id)},
         )
+    await notify_super_admins(
+        db,
+        type="inquiry_new",
+        title=f"New {visa.name} inquiry {inquiry.ref_no}",
+        body=f"{customer.full_name}: {inquiry.subject}",
+        data={"inquiry_id": str(inquiry.id)},
+    )
     await db.commit()
     for admin in team_admins:
         await job_queue.send_email(

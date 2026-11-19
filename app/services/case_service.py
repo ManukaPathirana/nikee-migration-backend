@@ -37,7 +37,7 @@ from app.services.application_service import (
     stage_of,
 )
 from app.services.audit_service import audit
-from app.services.notification_service import notify
+from app.services.notification_service import notify, notify_super_admins
 from app.services.storage_service import get_storage, sniff_file_type
 
 STAGE_LABELS = {
@@ -593,6 +593,14 @@ async def mark_paid(db: AsyncSession, inv: Invoice, payment_ref: str) -> None:
         app.assigned_staff_id,
         f"{app.ref_no}: {inv.kind} invoice paid",
         f"{app.customer.full_name} paid {pdf_service.money(inv.amount_cents, inv.currency)}.",
+    )
+    await notify_super_admins(
+        db,
+        type="payment_received",
+        title=f"Payment received: {app.ref_no}",
+        body=f"{app.customer.full_name} paid {pdf_service.money(inv.amount_cents, inv.currency)}"
+        f" ({inv.payment_type or invoice_label(inv.kind)}, {inv.number}).",
+        data={"application_id": str(app.id)},
     )
     await db.flush()
     if inv.kind == InvoiceKind.DEPOSIT.value:

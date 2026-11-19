@@ -35,7 +35,7 @@ from app.schemas.meeting import SlotIn
 from app.services import job_queue
 from app.services.audit_service import audit
 from app.services.ics_service import MODE_LABEL, ics_attachment, where
-from app.services.notification_service import notify
+from app.services.notification_service import notify, notify_super_admins
 
 M = MeetingStatus
 OPEN = {M.PROPOSED, M.CONFIRMED, M.RESCHEDULE_REQUESTED}
@@ -589,6 +589,17 @@ async def cancel(db: AsyncSession, meeting: Meeting, user: User, reason: str) ->
         body=reason,
         data={"meeting_id": str(meeting.id)},
     )
+    if was_confirmed:
+        slot = meeting.confirmed_slot
+        await notify_super_admins(
+            db,
+            type="meeting_cancelled",
+            title=f"Meeting cancelled — {meeting.inquiry.ref_no}",
+            body=(f"{fmt_slot(slot.start_at, slot.end_at)} is free again. " if slot else "")
+            + f"Reason: {reason}",
+            data={"meeting_id": str(meeting.id)},
+            skip=user.id,
+        )
     await db.commit()
     attachments = [ics_attachment(meeting, cancel=True)] if was_confirmed else None
     for person in (meeting.customer, meeting.staff):
@@ -677,6 +688,13 @@ async def request_reschedule(db: AsyncSession, meeting: Meeting, user: User, not
         type="meeting_reschedule_requested",
         title=f"New time requested — {meeting.inquiry.ref_no}",
         body=meeting.customer_note,
+        data={"meeting_id": str(meeting.id)},
+    )
+    await notify_super_admins(
+        db,
+        type="meeting_reschedule_requested",
+        title=f"Customer asked for another time — {meeting.inquiry.ref_no}",
+        body=f"{meeting.customer.full_name}: {meeting.customer_note}",
         data={"meeting_id": str(meeting.id)},
     )
     await db.commit()
