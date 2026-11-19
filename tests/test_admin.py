@@ -262,3 +262,78 @@ async def test_visa_type_management(client: AsyncClient, db: AsyncSession, h):
     assert resp.status_code == 409
     assert await db.scalar(select(VisaType.id).where(VisaType.slug == "working-holiday"))
     assert (await db.scalars(select(DocumentRequirement))).all()
+
+
+async def test_super_admin_deletes_customer_keeps_records(client: AsyncClient, db: AsyncSession, h):
+    staff_id = (await client.get("/api/v1/me", headers=h["s1"])).json()["id"]
+    inquiry = (
+        await client.post(
+            "/api/v1/inquiries",
+            json={"visa_type_id": TEAM, "subject": "Help please", "description": "Visa advice."},
+            headers=h["cust"],
+        )
+    ).json()
+    await client.post(f"/api/v1/inquiries/{inquiry['id']}/claim", headers=h["s1"])
+    customers = (await client.get(f"{ADMIN}/customers", headers=h["admin"])).json()["items"]
+    cust_id = next(c["id"] for c in customers if c["email"] == "cust@example.com")
+
+    # Only the super admin can delete.
+    resp = await client.delete(f"{ADMIN}/customers/{cust_id}", headers=h["s1"])
+    assert resp.status_code == 403
+    resp = await client.delete(f"{ADMIN}/customers/{cust_id}", headers=h["admin"])
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["message"] == "Jane Perera was deleted"
+
+    # Gone from lists and can't sign in; the email can be used for a new sign-up.
+    customers = (await client.get(f"{ADMIN}/customers", headers=h["admin"])).json()["items"]
+    assert all(c["id"] != cust_id for c in customers)
+    assert (await client.get(f"{ADMIN}/customers/{cust_id}", headers=h["admin"])).status_code == 404
+    login_resp = await client.post(
+        "/api/v1/auth/login", json={"email": "cust@example.com", "password": PASSWORD}
+    )
+    assert login_resp.status_code == 401
+    # The inquiry stays, closed and shown as from "Deleted user"; the staff member is told.
+    detail = (await client.get(f"/api/v1/inquiries/{inquiry['id']}", headers=h["s1"])).json()
+    assert detail["status"] == "cancelled" and detail["customer"]["full_name"] == "Deleted user"
+    inbox = (await client.get("/api/v1/notifications", headers=h["s1"])).json()["items"]
+    assert inbox[0]["type"] == "customer_deleted"
+    assert staff_id
+    log = await db.scalar(select(AuditLog).where(AuditLog.action == "customer.delete"))
+    assert log is not None
+
+
+async def test_staff_delete_blocked_while_they_have_open_work(
+    client: AsyncClient, db: AsyncSession, h
+):
+    inquiry = (
+        await client.post(
+            "/api/v1/inquiries",
+            json={"visa_type_id": TEAM, "subject": "Help please", "description": "Visa advice."},
+            headers=h["cust"],
+        )
+    ).json()
+    await client.post(f"/api/v1/inquiries/{inquiry['id']}/claim", headers=h["s1"])
+    staff = (await client.get(f"{ADMIN}/staff", headers=h["admin"])).json()["items"]
+    s1 = next(s for s in staff if s["email"] == "s1@example.com")
+
+    resp = await client.delete(f"{ADMIN}/staff/{s1['id']}", headers=h["admin"])
+    assert resp.status_code == 409
+    body = resp.json()["error"]
+    assert body["code"] == "has_open_work" and body["details"]["inquiries"] == 1
+    assert "1 open inquiry" in body["message"]
+
+    # Once the work is closed the staff member can be deleted.
+    await client.post(
+        f"/api/v1/inquiries/{inquiry['id']}/status",
+        json={"status": "cancelled", "reason": "Duplicate"},
+        headers=h["s1"],
+    )
+    resp = await client.delete(f"{ADMIN}/staff/{s1['id']}", headers=h["admin"])
+    assert resp.status_code == 200, resp.text
+    staff = (await client.get(f"{ADMIN}/staff", headers=h["admin"])).json()["items"]
+    assert all(s["id"] != s1["id"] for s in staff)
+
+    # The super admin can't delete themselves.
+    me = (await client.get("/api/v1/me", headers=h["admin"])).json()["id"]
+    resp = await client.delete(f"{ADMIN}/staff/{me}", headers=h["admin"])
+    assert resp.status_code == 404  # not a staff account

@@ -1,10 +1,12 @@
 """Admin: staff and customer management, dashboard stats, visa type configuration."""
 
+import contextlib
 import re
 import uuid
 from datetime import timedelta
 
 from sqlalchemy import Select, func, or_, select
+from sqlalchemy import delete as sa_delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload, selectinload
 
@@ -48,6 +50,11 @@ from app.services.audit_service import audit
 from app.services.auth_service import get_user_by_email, normalize_email, revoke_all_refresh_tokens
 
 OPEN_INQUIRY = (InquiryStatus.SCHEDULED, InquiryStatus.PROCESSING)
+OPEN_MEETING = (
+    MeetingStatus.PROPOSED,
+    MeetingStatus.CONFIRMED,
+    MeetingStatus.RESCHEDULE_REQUESTED,
+)
 TEAM_ROLES = (UserRole.STAFF, UserRole.ADMIN)
 
 
@@ -122,7 +129,7 @@ async def list_staff(
         roles = [role] if role in TEAM_ROLES else list(TEAM_ROLES)
     else:
         roles = [UserRole.STAFF]
-    query = _search(select(User).where(User.role.in_(roles)), q)
+    query = _search(select(User).where(User.role.in_(roles), User.deleted_at.is_(None)), q)
     scope = team_scope(actor) or team_id
     if scope is not None:
         query = query.where(User.team_id == scope)
@@ -134,7 +141,12 @@ async def list_staff(
 
 async def get_staff(db: AsyncSession, actor: User, staff_id: uuid.UUID) -> User:
     user = await db.get(User, staff_id)
-    if user is None or user.role not in TEAM_ROLES or not can_access_team(actor, user.team_id):
+    if (
+        user is None
+        or user.deleted_at is not None
+        or user.role not in TEAM_ROLES
+        or not can_access_team(actor, user.team_id)
+    ):
         raise NotFound("Staff member not found")
     if not is_super_admin(actor) and user.role == UserRole.ADMIN:
         raise NotFound("Staff member not found")  # team admins manage staff only
@@ -260,6 +272,142 @@ async def set_active(db: AsyncSession, admin: User, user: User, active: bool) ->
     await db.commit()
 
 
+async def _open_work(db: AsyncSession, user: User) -> dict[str, int]:
+    """What a staff member or team admin still looks after."""
+    inquiries = await db.scalar(
+        select(func.count())
+        .select_from(Inquiry)
+        .where(Inquiry.assigned_staff_id == user.id, Inquiry.status.in_(OPEN_INQUIRY))
+    )
+    cases = await db.scalar(
+        select(func.count())
+        .select_from(VisaApplication)
+        .where(
+            VisaApplication.assigned_staff_id == user.id,
+            VisaApplication.stage.notin_(["completed", "withdrawn"]),
+        )
+    )
+    meetings = await db.scalar(
+        select(func.count())
+        .select_from(Meeting)
+        .where(Meeting.staff_id == user.id, Meeting.status.in_(OPEN_MEETING))
+    )
+    return {"inquiries": inquiries or 0, "cases": cases or 0, "meetings": meetings or 0}
+
+
+async def _close_customer_work(db: AsyncSession, admin: User, user: User) -> None:
+    """A deleted customer's open inquiries, cases and meetings are closed; their uploaded
+    documents are removed. Staff who looked after them are told."""
+    from app.models import InquiryStatusHistory, Notification
+    from app.services.notification_service import notify
+    from app.services.storage_service import get_storage
+
+    reason = "Customer account deleted"
+    told: set[uuid.UUID] = set()
+    for inquiry in await db.scalars(
+        select(Inquiry).where(Inquiry.customer_id == user.id, Inquiry.status.in_(OPEN_INQUIRY))
+    ):
+        db.add(
+            InquiryStatusHistory(
+                inquiry_id=inquiry.id,
+                from_status=inquiry.status,
+                to_status=InquiryStatus.CANCELLED,
+                changed_by=admin.id,
+                reason=reason,
+            )
+        )
+        inquiry.status = InquiryStatus.CANCELLED
+        if inquiry.assigned_staff_id:
+            told.add(inquiry.assigned_staff_id)
+    for app in await db.scalars(
+        select(VisaApplication).where(
+            VisaApplication.customer_id == user.id,
+            VisaApplication.stage.notin_(["completed", "withdrawn"]),
+        )
+    ):
+        application_service.set_stage(app, application_service.CaseStage.WITHDRAWN)
+        if app.assigned_staff_id:
+            told.add(app.assigned_staff_id)
+    for meeting in await db.scalars(
+        select(Meeting).where(Meeting.customer_id == user.id, Meeting.status.in_(OPEN_MEETING))
+    ):
+        meeting.status = MeetingStatus.CANCELLED  # frees the shared-calendar slot
+        meeting.staff_note = reason
+        told.add(meeting.staff_id)
+    docs = list(
+        await db.scalars(
+            select(ApplicationDocument)
+            .join(VisaApplication, VisaApplication.id == ApplicationDocument.application_id)
+            .where(VisaApplication.customer_id == user.id)
+        )
+    )
+    storage = get_storage()
+    for doc in docs:
+        with contextlib.suppress(Exception):  # a missing file must not stop the deletion
+            await storage.delete(doc.file_key)
+        await db.delete(doc)
+    await db.execute(sa_delete(Notification).where(Notification.user_id == user.id))
+    for staff_id in told:
+        notify(
+            db,
+            user_id=staff_id,
+            type="customer_deleted",
+            title="A customer account was deleted",
+            body=f"{user.full_name}'s open inquiries, cases and meetings were closed.",
+        )
+
+
+async def delete_user(db: AsyncSession, admin: User, user: User) -> None:
+    """Super admin: delete a team admin, staff member or customer. Login and personal details
+    are erased; cases, invoices and history stay and show "Deleted user"."""
+    from app.models import DeviceToken, EmailVerification
+
+    if user.id == admin.id:
+        raise BadRequest("You can't delete your own account", code="self_delete")
+    if user.role == UserRole.SUPER_ADMIN:
+        raise BadRequest("Super admin accounts can't be deleted", code="admin_account")
+    if user.role in TEAM_ROLES:
+        work = await _open_work(db, user)
+        if any(work.values()):
+            singular = {"inquiries": "inquiry", "cases": "case", "meetings": "meeting"}
+            parts = [f"{n} open {k if n != 1 else singular[k]}" for k, n in work.items() if n]
+            raise Conflict(
+                f"{user.full_name} still has {', '.join(parts)}. Reassign or close them first.",
+                code="has_open_work",
+                details=work,
+            )
+    else:
+        await _close_customer_work(db, admin, user)
+
+    old_role = user.role.value
+    await revoke_all_refresh_tokens(db, user.id)
+    await db.execute(sa_delete(DeviceToken).where(DeviceToken.user_id == user.id))
+    await db.execute(sa_delete(EmailVerification).where(EmailVerification.user_id == user.id))
+    if user.role == UserRole.CUSTOMER:
+        await db.execute(sa_delete(CustomerProfile).where(CustomerProfile.user_id == user.id))
+    else:
+        profile = await db.get(StaffProfile, user.id)
+        if profile is not None:
+            profile.designation = None
+            profile.specialization = None
+    user.email = f"deleted-{user.id.hex}@deleted.invalid"  # frees the address for a new sign-up
+    user.full_name = "Deleted user"
+    user.phone = None
+    user.avatar_url = None
+    user.password_hash = None
+    user.is_active = False
+    user.is_verified = False
+    user.deleted_at = utcnow()
+    audit(
+        db,
+        actor_id=admin.id,
+        action=f"{old_role}.delete",
+        entity="user",
+        entity_id=user.id,
+    )
+    await db.commit()
+
+
 async def resend_invite(db: AsyncSession, admin: User, user: User) -> None:
     if user.password_hash is not None:
         raise BadRequest("This staff member has already set a password", code="invite_accepted")
@@ -308,7 +456,9 @@ def _customer_out(u: User, apps: dict, inqs: dict) -> CustomerOut:
 async def list_customers(
     db: AsyncSession, params: PageParams, *, q: str | None, active: bool | None
 ) -> tuple[list[CustomerOut], int]:
-    query = _search(select(User).where(User.role == UserRole.CUSTOMER), q)
+    query = _search(
+        select(User).where(User.role == UserRole.CUSTOMER, User.deleted_at.is_(None)), q
+    )
     if active is not None:
         query = query.where(User.is_active.is_(active))
     rows, total = await _page(db, query, params, User.created_at.desc())
@@ -318,7 +468,7 @@ async def list_customers(
 
 async def get_customer(db: AsyncSession, customer_id: uuid.UUID) -> User:
     user = await db.get(User, customer_id)
-    if user is None or user.role != UserRole.CUSTOMER:
+    if user is None or user.role != UserRole.CUSTOMER or user.deleted_at is not None:
         raise NotFound("Customer not found")
     return user
 

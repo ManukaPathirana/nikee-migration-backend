@@ -132,6 +132,11 @@ Tests use the pooled engine (all tests share one event loop) and cheap argon2 se
 - `GET /admin/dashboard` (counts, inquiries per week in UTC, recent audit activity)
 - Staff: `GET/POST /admin/staff`, `PATCH /admin/staff/{id}`, `POST /admin/staff/{id}/active`,
   `POST /admin/staff/{id}/resend-invite`. New staff have no password until they accept the invite.
+- Delete (super admin only): `DELETE /admin/staff/{id}` (team admin or staff; 409 `has_open_work`
+  with counts while they have open inquiries/cases/meetings) and `DELETE /admin/customers/{id}`
+  (closes their open inquiries/cases/meetings, deletes uploaded documents). The row stays for
+  records: email -> `deleted-<id>@deleted.invalid`, name "Deleted user", no password, inactive,
+  `deleted_at` set; lists skip deleted users. Super admins can't be deleted.
 - Customers: `GET /admin/customers`, `GET /admin/customers/{id}` (profile + applications + inquiries),
   `POST /admin/customers/{id}/active`. Deactivating revokes refresh tokens; access tokens stop working
   immediately because `get_current_user` checks `is_active`.

@@ -184,7 +184,7 @@ def _period(start: datetime | None, end: datetime | None) -> tuple[datetime, dat
 async def _team_members(
     db: AsyncSession, actor: User, team_id: uuid.UUID | None, user_id: uuid.UUID | None = None
 ) -> list[User]:
-    query = select(User).where(User.role.in_(TEAM_ROLES))
+    query = select(User).where(User.role.in_(TEAM_ROLES), User.deleted_at.is_(None))
     scope = team_scope(actor) or team_id
     if scope is not None:
         query = query.where(User.team_id == scope)

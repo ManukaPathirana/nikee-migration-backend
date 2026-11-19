@@ -28,6 +28,8 @@ class User(UUIDPkMixin, TimestampMixin, Base):
     is_verified: Mapped[bool] = mapped_column(default=False, server_default=false())
     is_active: Mapped[bool] = mapped_column(default=True, server_default=true())
     last_login_at: Mapped[datetime | None]
+    # Set when the super admin deleted the account: personal details are erased, records stay.
+    deleted_at: Mapped[datetime | None]
     # The team (visa type) a team admin or staff member belongs to; null for others.
     team_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("visa_types.id", ondelete="RESTRICT"), index=True

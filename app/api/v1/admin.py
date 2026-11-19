@@ -194,6 +194,15 @@ async def set_staff_active(
     return await admin_service.staff_out(db, user)
 
 
+@router.delete("/staff/{staff_id}", response_model=MessageOut)
+async def delete_staff(staff_id: uuid.UUID, admin: SuperAdminUser, db: DbSession) -> MessageOut:
+    """Super admin: delete a team admin or staff member (refused while they have open work)."""
+    user = await admin_service.get_staff(db, admin, staff_id)
+    name = user.full_name
+    await admin_service.delete_user(db, admin, user)
+    return MessageOut(message=f"{name} was deleted")
+
+
 @router.post("/staff/{staff_id}/resend-invite", response_model=MessageOut)
 async def resend_invite(staff_id: uuid.UUID, admin: AdminUser, db: DbSession) -> MessageOut:
     user = await admin_service.get_staff(db, admin, staff_id)
@@ -216,6 +225,18 @@ async def list_customers(
 async def get_customer(customer_id: uuid.UUID, _: SuperAdminUser, db: DbSession) -> CustomerDetail:
     user = await admin_service.get_customer(db, customer_id)
     return await admin_service.customer_detail(db, user)
+
+
+@router.delete("/customers/{customer_id}", response_model=MessageOut)
+async def delete_customer(
+    customer_id: uuid.UUID, admin: SuperAdminUser, db: DbSession
+) -> MessageOut:
+    """Super admin: delete a customer. Their open inquiries, cases and meetings are closed and
+    their documents removed; invoices and history stay."""
+    user = await admin_service.get_customer(db, customer_id)
+    name = user.full_name
+    await admin_service.delete_user(db, admin, user)
+    return MessageOut(message=f"{name} was deleted")
 
 
 @router.post("/customers/{customer_id}/active", response_model=CustomerDetail)
