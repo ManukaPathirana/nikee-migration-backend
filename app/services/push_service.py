@@ -24,17 +24,39 @@ FCM_SCOPE = "https://www.googleapis.com/auth/firebase.messaging"
 CHANNEL_ID = "nikee_updates"  # keep in step with the app (core/push)
 
 
-@lru_cache
-def _key_info() -> dict[str, Any] | None:
-    raw = settings.fcm_credentials_json.strip()
+def _parse_key(raw: str) -> tuple[dict[str, Any] | None, str | None]:
+    """(key, problem). Accepts the file content as pasted, also wrapped in quotes."""
+    raw = raw.strip()
     if not raw:
-        return None
+        return None, "FCM_CREDENTIALS_JSON is empty or not set for this deployment"
+    if raw[0] == "'" and raw[-1] == "'":
+        raw = raw[1:-1].strip()
     try:
         info = json.loads(raw)
-    except ValueError:
-        logger.error("FCM_CREDENTIALS_JSON is not valid JSON; push is off")
-        return None
-    return info if isinstance(info, dict) and info.get("private_key") else None
+    except ValueError as e:
+        return None, (
+            f"FCM_CREDENTIALS_JSON is set ({len(raw)} characters) but isn't valid JSON "
+            f"(line {e.lineno}, column {e.colno}): paste the whole key file, starting with {{"
+        )
+    if isinstance(info, str):  # pasted as a JSON string of the JSON
+        return _parse_key(info)
+    if not isinstance(info, dict):
+        return None, "FCM_CREDENTIALS_JSON must be the key file's JSON object"
+    missing = [k for k in ("project_id", "private_key", "client_email") if not info.get(k)]
+    if missing:
+        return (
+            None,
+            f"FCM_CREDENTIALS_JSON is missing {', '.join(missing)}: use the service-account key",
+        )
+    return info, None
+
+
+@lru_cache
+def _key_info() -> dict[str, Any] | None:
+    info, problem = _parse_key(settings.fcm_credentials_json)
+    if problem and settings.fcm_credentials_json.strip():
+        logger.error("Push is off: %s", problem)
+    return info
 
 
 def project_id() -> str:
@@ -62,7 +84,7 @@ def status() -> dict[str, Any]:
     """For the super admin check: configured, and whether Google accepts the key. No secrets."""
     out: dict[str, Any] = {"enabled": is_enabled(), "project_id": project_id(), "key_ok": False}
     if not out["enabled"]:
-        out["problem"] = "No Firebase key: set FCM_CREDENTIALS_JSON"
+        out["problem"] = _parse_key(settings.fcm_credentials_json)[1] or "No Firebase project id"
         return out
     try:
         _access_token()

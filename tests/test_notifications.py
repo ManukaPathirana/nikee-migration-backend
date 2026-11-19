@@ -137,7 +137,7 @@ def test_firebase_key_from_env_json(monkeypatch):
         monkeypatch.setattr(settings, "fcm_credentials_json", "not json")
         push_service._key_info.cache_clear()
         assert not push_service.is_enabled()
-        key = {"type": "service_account", "project_id": "nikee-x", "private_key": "k"}
+        key = {"project_id": "nikee-x", "private_key": "k", "client_email": "push@x.iam"}
         monkeypatch.setattr(settings, "fcm_credentials_json", json.dumps(key))
         push_service._key_info.cache_clear()
         assert push_service.is_enabled() and push_service.project_id() == "nikee-x"
