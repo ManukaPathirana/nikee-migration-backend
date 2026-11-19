@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, status
@@ -8,7 +8,9 @@ from app.core.deps import CurrentUser, CustomerUser, DbSession, StaffOrAdmin
 from app.models import MeetingStatus
 from app.schemas.common import Page, PageParams, page_params
 from app.schemas.meeting import (
+    CalendarOut,
     CancelIn,
+    DeclineIn,
     MeetingCreate,
     MeetingOut,
     ProposeIn,
@@ -63,6 +65,28 @@ async def create_meeting(data: MeetingCreate, user: StaffOrAdmin, db: DbSession)
         staff_note=data.staff_note,
     )
     return MeetingOut.model_validate(meeting)
+
+
+@router.get("/calendar", response_model=CalendarOut)
+async def shared_calendar(
+    user: StaffOrAdmin,
+    db: DbSession,
+    start: date | None = None,
+    days: Annotated[int, Query(ge=1, le=42)] = 14,
+) -> CalendarOut:
+    """The shared booking calendar (all teams): 30-minute slots, weekdays 9-5, free or busy."""
+    first = start or svc.business_today()
+    return CalendarOut.model_validate(await svc.calendar(db, user, first, days))
+
+
+@router.post("/{meeting_id}/decline", response_model=MeetingOut)
+async def decline_meeting(
+    meeting_id: uuid.UUID, data: DeclineIn, user: StaffOrAdmin, db: DbSession
+) -> MeetingOut:
+    """Super admin: can't attend this time; the host is asked to book another."""
+    meeting = await svc.get_meeting(db, meeting_id, user)
+    await svc.decline(db, meeting, user, data.reason)
+    return MeetingOut.model_validate(await svc.get_meeting(db, meeting_id, user))
 
 
 @router.get("/{meeting_id}", response_model=MeetingOut)

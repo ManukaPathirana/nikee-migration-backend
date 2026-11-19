@@ -41,6 +41,8 @@ class Meeting(UUIDPkMixin, TimestampMixin, Base):
     )
     customer_note: Mapped[str | None] = mapped_column(Text)
     staff_note: Mapped[str | None] = mapped_column(Text)
+    # Why the super admin can't attend the booked time (staff then book another).
+    admin_note: Mapped[str | None] = mapped_column(Text)
     # Set when each reminder email has been sent (or skipped because it was too late).
     reminder_24h_sent_at: Mapped[datetime | None]
     reminder_1h_sent_at: Mapped[datetime | None]

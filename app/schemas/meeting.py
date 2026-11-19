@@ -24,6 +24,7 @@ class SlotIn(BaseModel):
 
 
 class ProposeIn(BaseModel):
+    # One 30-minute slot from the shared calendar (a list for older app versions).
     slots: list[SlotIn] = Field(min_length=1, max_length=3)
     staff_note: str | None = Field(default=None, max_length=1000)
 
@@ -55,6 +56,38 @@ class CancelIn(BaseModel):
     reason: str = Field(min_length=3, max_length=1000)
 
 
+class DeclineIn(BaseModel):
+    reason: str = Field(min_length=3, max_length=1000)
+
+
+class CalendarMeeting(BaseModel):
+    id: uuid.UUID
+    team: str
+    staff_name: str
+    is_mine: bool  # the viewer hosts it or manages its team: they may open it
+    ref_no: str | None = None  # only for meetings the viewer may open
+
+
+class CalendarSlot(BaseModel):
+    start_at: datetime
+    end_at: datetime
+    state: str  # free | busy | past
+    meeting: CalendarMeeting | None = None
+
+
+class CalendarDay(BaseModel):
+    date: str  # YYYY-MM-DD in the business time zone
+    slots: list[CalendarSlot]
+
+
+class CalendarOut(BaseModel):
+    timezone: str
+    slot_minutes: int
+    day_start: str
+    day_end: str
+    days: list[CalendarDay]
+
+
 class SlotOut(ORMModel):
     id: uuid.UUID
     start_at: datetime
@@ -81,5 +114,6 @@ class MeetingOut(ORMModel):
     slots: list[SlotOut]
     customer_note: str | None
     staff_note: str | None
+    admin_note: str | None = None
     created_at: datetime
     updated_at: datetime

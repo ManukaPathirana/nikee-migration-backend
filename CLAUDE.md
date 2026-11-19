@@ -93,23 +93,29 @@ OTP codes: 6 digits, 10 min, max 5 wrong attempts; stored as HMAC hashes.
   (acting on an unclaimed one claims it); cancel and reopen need a reason; every change writes
   history + audit + customer notification + email (`inquiry_update.html`).
 
-## Meetings API
-- `GET /meetings?status=&inquiry_id=&start_from=&start_to=` (customer: own, staff: hosted, admin: all)
-- `POST /meetings` (staff/admin: inquiry_id, mode online|in_person|phone, link/location, 1-3 slots)
-- `POST /meetings/{id}/propose` (new slots), `/select-slot` + `/request-reschedule` (customer),
-  `/cancel` (reason) + `/complete` (host/admin)
-- Flow: proposed → confirmed (customer picks; .ics REQUEST emailed to both) or reschedule_requested
-  → proposed again; confirmed → completed | cancelled (.ics CANCEL, `ics_sequence` bumped).
-- Reminders: `meeting_service.send_due_reminders` runs every minute (arq cron when REDIS_URL is set,
-  otherwise an in-process loop started in `app.main` lifespan). Each reminder is claimed with a
-  conditional UPDATE on `reminder_24h_sent_at` / `reminder_1h_sent_at`, so it is sent exactly once.
+## Meetings API (shared calendar)
+- The super admin attends every meeting, so all teams share ONE calendar: 30-minute slots,
+  Mon-Fri 9:00-17:00 in `BUSINESS_TIMEZONE`, one meeting per slot (checked under a pg advisory
+  lock in `meeting_service._ensure_free`). Rules: `SLOT_MINUTES`, `DAY_START/END`, `WORKDAYS`.
+- `GET /meetings/calendar?start=YYYY-MM-DD&days=14` (staff/admins of any team): every slot with
+  state free|busy|past and the holding meeting (team, staff; ref only if the viewer may open it).
+- `POST /meetings` (staff/admin: inquiry_id, mode, link/location, exactly 1 slot) books and
+  confirms at once; customer + super admin(s) get the date, time and link (notification + .ics).
+- `POST /meetings/{id}/decline` (super admin, reason -> `admin_note`): status reschedule_requested,
+  host told to book another time, customer told the time will change.
+- `POST /meetings/{id}/propose` (1 slot) books a new time for an open meeting (after a decline or
+  a customer request); `.ics` SEQUENCE bumped so the invite updates.
+- Customer: `/request-reschedule` (proposed or confirmed); `/select-slot` only for old "proposed"
+  meetings. Host/admin: `/cancel` (reason), `/complete`.
+- Reminders 24h and 1h before to customer, host and super admins (`send_due_reminders`, claimed
+  with a conditional UPDATE so each is sent once).
 - Email times use `BUSINESS_TIMEZONE` (default Asia/Colombo; needs `tzdata` on Windows).
 
 ## Notifications & push
 - `GET /notifications?unread=`, `GET /notifications/unread-count`, `POST /notifications/{id}/read`,
   `POST /notifications/read-all`, `POST/DELETE /me/device-tokens`.
 - Create notifications only with `notification_service.notify(...)` (adds a row; caller commits).
-  When FCM is configured (`FCM_PROJECT_ID` + `FCM_CREDENTIALS_FILE`, `pip install google-auth`) a
+  When FCM is configured (`FCM_CREDENTIALS_JSON` on Vercel, or `FCM_CREDENTIALS_FILE`) a
   SQLAlchemy `after_commit` hook queues a `send_push` job per notification; otherwise nothing is sent.
   Notification `data` should carry `inquiry_id` / `meeting_id` / `application_id` so the app can open it.
 
