@@ -4,7 +4,15 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import AuditLog, DocumentRequirement, UserRole, VisaType
-from tests.conftest import PASSWORD, TEAM, auth_header, create_user, last_email, login
+from tests.conftest import (
+    PASSWORD,
+    TEAM,
+    auth_header,
+    create_user,
+    hand_to_staff,
+    last_email,
+    login,
+)
 
 ADMIN = "/api/v1/admin"
 
@@ -32,11 +40,12 @@ async def _completed_inquiry(client: AsyncClient, h: dict) -> dict:
         )
     ).json()
     iid = inquiry["id"]
+    # Inquiries are handled by admins (never assigned to staff).
     await client.post(
-        f"/api/v1/inquiries/{iid}/status", json={"status": "processing"}, headers=h["s1"]
+        f"/api/v1/inquiries/{iid}/status", json={"status": "processing"}, headers=h["admin"]
     )
     await client.post(
-        f"/api/v1/inquiries/{iid}/status", json={"status": "completed"}, headers=h["s1"]
+        f"/api/v1/inquiries/{iid}/status", json={"status": "completed"}, headers=h["admin"]
     )
     return inquiry
 
@@ -154,7 +163,7 @@ async def test_reviews_flow_and_moderation(client: AsyncClient, h):
     )
     assert resp.status_code == 201, resp.text
     review = resp.json()
-    assert review["staff"]["full_name"] != "Staff One"  # customers see the team, not staff
+    assert (review["staff"] or {}).get("full_name") != "Staff One"  # never staff for customers
     resp = await client.post(
         "/api/v1/reviews", json={"inquiry_id": inquiry["id"], "rating": 4}, headers=h["cust"]
     )
@@ -212,7 +221,7 @@ async def test_dashboard_counts(client: AsyncClient, h):
     assert data["inquiries_unassigned"] == 1
     assert len(data["inquiries_per_week"]) == 8
     assert data["inquiries_per_week"][-1]["count"] == 2
-    assert data["recent_activity"][0]["actor_name"] == "Staff One"
+    assert data["recent_activity"][0]["actor_name"] == "Ad Min"
     assert (await client.get(f"{ADMIN}/dashboard", headers=h["s1"])).status_code == 403
 
 
@@ -273,7 +282,7 @@ async def test_super_admin_deletes_customer_keeps_records(client: AsyncClient, d
             headers=h["cust"],
         )
     ).json()
-    await client.post(f"/api/v1/inquiries/{inquiry['id']}/claim", headers=h["s1"])
+    await hand_to_staff(db, inquiry["id"], "s1@example.com")
     customers = (await client.get(f"{ADMIN}/customers", headers=h["admin"])).json()["items"]
     cust_id = next(c["id"] for c in customers if c["email"] == "cust@example.com")
 
@@ -312,7 +321,7 @@ async def test_staff_delete_blocked_while_they_have_open_work(
             headers=h["cust"],
         )
     ).json()
-    await client.post(f"/api/v1/inquiries/{inquiry['id']}/claim", headers=h["s1"])
+    await hand_to_staff(db, inquiry["id"], "s1@example.com")
     staff = (await client.get(f"{ADMIN}/staff", headers=h["admin"])).json()["items"]
     s1 = next(s for s in staff if s["email"] == "s1@example.com")
 

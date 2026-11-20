@@ -82,17 +82,14 @@ async def test_inquiry_goes_to_its_team_only(client: AsyncClient, org):
     assert sum(only_a.json()["counts"].values()) == 0
 
 
-async def test_admin_assigns_only_own_team_staff(client: AsyncClient, org):
+async def test_inquiries_are_not_assigned_to_staff(client: AsyncClient, org):
+    """Team admins handle inquiries themselves; staff can't be assigned or claim them."""
     inq = await _inquiry(client, org, org["appeal"])
     url = f"{API}/inquiries/{inq['id']}/assign"
-    wrong = await client.post(url, json={"staff_id": org["staff_a_id"]}, headers=org["super"])
-    assert wrong.status_code == 400
-    assert wrong.json()["error"]["code"] == "wrong_team"
-    ok = await client.post(url, json={"staff_id": org["staff_b_id"]}, headers=org["adm_b"])
-    assert ok.status_code == 200, ok.text
-    assert ok.json()["assigned_staff"]["id"] == org["staff_b_id"]
-
-    # The staff picker only offers the admin's own team.
+    resp = await client.post(url, json={"staff_id": org["staff_b_id"]}, headers=org["adm_b"])
+    assert resp.status_code == 400
+    assert resp.json()["error"]["code"] == "no_staff_assignment"
+    # The staff picker (used for visa cases) still only offers the admin's own team.
     picker = (await client.get(f"{API}/staff", headers=org["adm_b"])).json()
     assert {s["id"] for s in picker} == {org["staff_b_id"]}
 

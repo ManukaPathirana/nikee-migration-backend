@@ -124,3 +124,17 @@ def last_email(to: str) -> dict[str, Any]:
     matches = [m for m in email_service.outbox if to in m["to"]]
     assert matches, f"no email sent to {to}"
     return matches[-1]
+
+
+async def hand_to_staff(db: AsyncSession, inquiry_id: str, email: str) -> None:
+    """Old data: inquiries handed to a staff member before team admins handled them all."""
+    import uuid as _uuid
+
+    from sqlalchemy import select as _select
+
+    from app.models import Inquiry, User
+
+    staff = await db.scalar(_select(User).where(User.email == email))
+    inquiry = await db.get(Inquiry, _uuid.UUID(inquiry_id))
+    inquiry.assigned_staff_id = staff.id
+    await db.commit()

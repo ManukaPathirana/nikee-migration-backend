@@ -87,7 +87,7 @@ async def get_inquiry(db: AsyncSession, inquiry_id: uuid.UUID, user: User) -> In
         raise NotFound("Inquiry not found")
     if _is_staff(user) and not can_access_team(user, inquiry.visa_type_id):
         raise NotFound("Inquiry not found")  # another team's inquiry
-    if user.role == UserRole.STAFF and inquiry.kind == "general":
+    if user.role == UserRole.STAFF and inquiry.assigned_staff_id != user.id:
         raise NotFound("Inquiry not found")  # handled by the team admin
     return inquiry
 
@@ -110,7 +110,9 @@ async def list_inquiries(
         if scope_team is not None:
             query = query.where(Inquiry.visa_type_id == scope_team)
     if user.role == UserRole.STAFF:
-        query = query.where(Inquiry.kind == "consultation")  # general ones are the admin's
+        # Only inquiries handed to a staff member earlier stay visible; new ones are the team
+        # admin's (both kinds) and are never assigned to staff.
+        query = query.where(Inquiry.assigned_staff_id == user.id)
     if not _is_staff(user):
         query = query.where(Inquiry.customer_id == user.id)
     elif scope == "queue":
@@ -298,6 +300,11 @@ async def create_inquiry(
 
 
 async def claim(db: AsyncSession, inquiry: Inquiry, staff: User) -> None:
+    if inquiry.assigned_staff_id != staff.id:
+        raise BadRequest(
+            "Inquiries are handled by the team admin; staff can't claim them",
+            code="no_staff_assignment",
+        )
     if inquiry.assigned_staff_id == staff.id:
         return
     if inquiry.assigned_staff_id is not None:
@@ -312,11 +319,10 @@ async def claim(db: AsyncSession, inquiry: Inquiry, staff: User) -> None:
 
 
 async def assign(db: AsyncSession, inquiry: Inquiry, admin: User, staff_id: uuid.UUID) -> None:
-    if inquiry.kind == "general":
-        raise BadRequest(
-            "General inquiries are answered by the team admin, not assigned to staff",
-            code="general_inquiry",
-        )
+    raise BadRequest(
+        "Inquiries are handled by the team admin; they are not assigned to staff",
+        code="no_staff_assignment",
+    )
     staff = await db.get(User, staff_id)
     if staff is None or staff.role != UserRole.STAFF or not staff.is_active:
         raise BadRequest("Choose an active staff member", code="invalid_staff")

@@ -151,6 +151,29 @@ async def _ensure_free(
         )
 
 
+async def _migration_agent(db: AsyncSession) -> User | None:
+    """The migration agent who hosts consultations: the (first) active super admin."""
+    return await db.scalar(
+        select(User)
+        .where(User.role == UserRole.SUPER_ADMIN, User.is_active.is_(True))
+        .order_by(User.created_at)
+        .limit(1)
+    )
+
+
+async def _team_admins(db: AsyncSession, team_id: uuid.UUID) -> list[User]:
+    return list(
+        await db.scalars(
+            select(User).where(
+                User.role == UserRole.ADMIN,
+                User.team_id == team_id,
+                User.is_active.is_(True),
+                User.deleted_at.is_(None),
+            )
+        )
+    )
+
+
 async def _super_admins(db: AsyncSession) -> list[User]:
     return list(
         await db.scalars(
@@ -220,8 +243,11 @@ async def list_meetings(
     inquiry_id: uuid.UUID | None = None,
     start_from: datetime | None = None,
     start_to: datetime | None = None,
+    hosted_by_me: bool = False,
 ) -> tuple[list[Meeting], int]:
     query = _query()
+    if hosted_by_me:
+        query = query.where(Meeting.staff_id == user.id)
     if user.role == UserRole.CUSTOMER:
         query = query.where(Meeting.customer_id == user.id)
     elif user.role == UserRole.STAFF:
@@ -268,23 +294,17 @@ async def create_meeting(
         raise NotFound("Inquiry not found")
     if inquiry.status in (InquiryStatus.COMPLETED, InquiryStatus.CANCELLED):
         raise BadRequest("This inquiry is closed", code="inquiry_closed")
-    if inquiry.kind == "general":
-        # General inquiries: the team admin meets the customer, in their own team calendar.
-        if staff.role != UserRole.ADMIN:
-            raise Forbidden(
-                "The team admin books meetings for general inquiries", code="team_admin_only"
-            )
-    elif staff.role == UserRole.STAFF:
-        if inquiry.assigned_staff_id is None:
-            inquiry.assigned_staff_id = staff.id  # scheduling a meeting claims the inquiry
-        elif inquiry.assigned_staff_id != staff.id:
-            raise Forbidden("This inquiry is assigned to another team member", code="not_assigned")
-    elif inquiry.assigned_staff_id is None:
-        # Meetings are always hosted by a consultant; the admin assigns one first.
-        raise BadRequest(
-            "Assign this inquiry to a staff member before scheduling a meeting",
-            code="needs_assignment",
-        )
+    # The team admin books both kinds (the super admin may book consultations too).
+    allowed = staff.role == UserRole.ADMIN or (
+        staff.role == UserRole.SUPER_ADMIN and inquiry.kind == "consultation"
+    )
+    if not allowed:
+        raise Forbidden("The team admin books meetings for inquiries", code="team_admin_only")
+    agent = None
+    if inquiry.kind == "consultation":
+        agent = staff if staff.role == UserRole.SUPER_ADMIN else await _migration_agent(db)
+        if agent is None:
+            raise BadRequest("There is no migration agent account yet", code="no_agent")
     if await db.scalar(
         select(Meeting.id)
         .where(Meeting.inquiry_id == inquiry.id, Meeting.status.in_(OPEN))
@@ -302,9 +322,8 @@ async def create_meeting(
         db, slot.start_at, slot.end_at, except_id=None, team_id=calendar_team(inquiry)
     )
 
-    # Consultations: the assigned consultant hosts (also when the admin schedules it).
-    # General inquiries: the team admin who books it hosts it.
-    host_id = staff.id if inquiry.kind == "general" else inquiry.assigned_staff_id
+    # Consultations: the migration agent (super admin) hosts. General: the team admin.
+    host_id = agent.id if agent is not None else staff.id
 
     meeting = Meeting(
         inquiry_id=inquiry.id,
@@ -417,8 +436,8 @@ async def _announce_booking(
     )
     admins = await _super_admins(db) if meeting.inquiry.kind == "consultation" else []
     for admin in admins:
-        if admin.id == by.id:
-            continue
+        if admin.id == by.id or admin.id == meeting.staff_id:
+            continue  # the host gets its own notification below
         notify(
             db,
             user_id=admin.id,
@@ -439,7 +458,8 @@ async def _announce_booking(
     await db.commit()
     invite = ics_attachment(meeting)
     heading = "Your meeting has a new time" if rebooked else "Your meeting is booked"
-    for person in [meeting.customer, meeting.staff, *admins]:
+    people = {p.id: p for p in [meeting.customer, meeting.staff, *admins]}
+    for person in people.values():
         await job_queue.send_email(
             to=person.email,
             subject=f"{heading} — {meeting.inquiry.ref_no}",
@@ -479,14 +499,15 @@ async def decline(db: AsyncSession, meeting: Meeting, user: User, reason: str) -
         meta={"reason": reason},
     )
     data = {"meeting_id": str(meeting.id)}
-    notify(
-        db,
-        user_id=meeting.staff_id,
-        type="meeting_declined",
-        title=f"Book another time: {meeting.inquiry.ref_no}",
-        body=f"{user.full_name} can't attend {when}. {meeting.admin_note}",
-        data=data,
-    )
+    for admin in await _team_admins(db, meeting.inquiry.visa_type_id):
+        notify(
+            db,
+            user_id=admin.id,
+            type="meeting_declined",
+            title=f"Book another time: {meeting.inquiry.ref_no}",
+            body=f"{user.full_name} can't attend {when}. {meeting.admin_note}",
+            data=data,
+        )
     notify(
         db,
         user_id=meeting.customer_id,
@@ -743,14 +764,15 @@ async def request_reschedule(db: AsyncSession, meeting: Meeting, user: User, not
         raise BadRequest("This meeting can't be changed now", code="invalid_status")
     meeting.status = M.RESCHEDULE_REQUESTED
     meeting.customer_note = note.strip()
-    notify(
-        db,
-        user_id=meeting.staff_id,
-        type="meeting_reschedule_requested",
-        title=f"New time requested — {meeting.inquiry.ref_no}",
-        body=meeting.customer_note,
-        data={"meeting_id": str(meeting.id)},
-    )
+    for admin in await _team_admins(db, meeting.inquiry.visa_type_id):
+        notify(
+            db,
+            user_id=admin.id,
+            type="meeting_reschedule_requested",
+            title=f"New time requested — {meeting.inquiry.ref_no}",
+            body=meeting.customer_note,
+            data={"meeting_id": str(meeting.id)},
+        )
     if meeting.inquiry.kind == "consultation":
         await notify_super_admins(
             db,

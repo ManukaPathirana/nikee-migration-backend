@@ -1,6 +1,6 @@
 import uuid
 from datetime import date, datetime
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Query, status
 
@@ -33,6 +33,7 @@ async def list_meetings(
     inquiry_id: uuid.UUID | None = None,
     start_from: datetime | None = None,
     start_to: datetime | None = None,
+    host: Literal["me"] | None = None,
 ) -> Page[MeetingOut]:
     """Customers see their meetings, staff the meetings they host, admins all.
     `start_from`/`start_to` filter confirmed meetings by start time (calendar views)."""
@@ -44,6 +45,7 @@ async def list_meetings(
         inquiry_id=inquiry_id,
         start_from=start_from,
         start_to=start_to,
+        hosted_by_me=host == "me",
     )
     return Page(
         items=[MeetingOut.model_validate(m) for m in rows],

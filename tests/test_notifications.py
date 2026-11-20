@@ -15,8 +15,10 @@ async def h(client: AsyncClient, db: AsyncSession) -> dict:
     await create_user(db, email="cust@example.com")
     await create_user(db, email="other@example.com")
     await create_user(db, email="s1@example.com", role=UserRole.STAFF)
+    await create_user(db, email="lead@example.com", role=UserRole.ADMIN)
     return {
-        k: auth_header(await login(client, f"{k}@example.com")) for k in ("cust", "other", "s1")
+        k: auth_header(await login(client, f"{k}@example.com"))
+        for k in ("cust", "other", "s1", "lead")
     }
 
 
@@ -33,7 +35,9 @@ async def _inquiry_with_status_change(client: AsyncClient, h: dict) -> str:
         )
     ).json()
     await client.post(
-        f"/api/v1/inquiries/{inquiry['id']}/status", json={"status": "processing"}, headers=h["s1"]
+        f"/api/v1/inquiries/{inquiry['id']}/status",
+        json={"status": "processing"},
+        headers=h["lead"],
     )
     return inquiry["id"]
 
@@ -109,9 +113,9 @@ async def test_push_is_queued_after_commit_when_enabled(client: AsyncClient, h, 
     inquiry_id = await _inquiry_with_status_change(client, h)
     if notification_service._tasks:
         await asyncio.gather(*list(notification_service._tasks))
-    assert len(sent) == 1
-    assert sent[0]["data"]["inquiry_id"] == inquiry_id
-    assert sent[0]["data"]["type"] == "inquiry_status"
+    # The team admin is told about the new inquiry; the customer about the status change.
+    assert [p["data"]["type"] for p in sent] == ["inquiry_new", "inquiry_status"]
+    assert sent[1]["data"]["inquiry_id"] == inquiry_id
 
 
 async def test_push_disabled_by_default(client: AsyncClient, h, monkeypatch):

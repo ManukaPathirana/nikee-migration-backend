@@ -20,6 +20,7 @@ async def people(client: AsyncClient, db: AsyncSession) -> dict:
     )
     await create_user(db, email="s2@example.com", role=UserRole.STAFF, full_name="Staff Two")
     await create_user(db, email="admin@example.com", role=UserRole.SUPER_ADMIN, full_name="Ad Min")
+    await create_user(db, email="lead@example.com", role=UserRole.ADMIN, full_name="Team Lead")
     h = {}
     for key, email in [
         ("cust", "cust@example.com"),
@@ -27,6 +28,7 @@ async def people(client: AsyncClient, db: AsyncSession) -> dict:
         ("s1", "s1@example.com"),
         ("s2", "s2@example.com"),
         ("admin", "admin@example.com"),
+        ("lead", "lead@example.com"),
     ]:
         h[key] = auth_header(await login(client, email))
     h["s1_id"] = str(staff1.id)
@@ -74,27 +76,19 @@ async def test_customers_only_see_their_own(client: AsyncClient, people):
     assert (await _status(client, people["cust"], mine["id"], "processing")).status_code == 403
 
 
-async def test_queue_claim_and_conflict(client: AsyncClient, people):
+async def test_staff_dont_handle_inquiries(client: AsyncClient, people):
+    """Both kinds of inquiry are handled by the team admin: no staff queue, claim or assign."""
     inquiry = await _create(client, people["cust"])
     queue = (await client.get(API, params={"scope": "queue"}, headers=people["s1"])).json()
-    assert [i["id"] for i in queue["items"]] == [inquiry["id"]]
-
-    resp = await client.post(f"{API}/{inquiry['id']}/claim", headers=people["s1"])
-    assert resp.status_code == 200
-    assert resp.json()["assigned_staff"]["full_name"] == "Staff One"
-
-    resp = await client.post(f"{API}/{inquiry['id']}/claim", headers=people["s2"])
-    assert resp.status_code == 409
-    assert resp.json()["error"]["code"] == "already_claimed"
-
-    queue = (await client.get(API, params={"scope": "queue"}, headers=people["s2"])).json()
     assert queue["total"] == 0
-    mine = (await client.get(API, params={"scope": "mine"}, headers=people["s1"])).json()
-    assert mine["total"] == 1
-    # Admins assign rather than claim.
-    assert (
-        await client.post(f"{API}/{inquiry['id']}/claim", headers=people["admin"])
-    ).status_code == 403
+    assert (await client.get(f"{API}/{inquiry['id']}", headers=people["s1"])).status_code == 404
+    resp = await client.post(
+        f"{API}/{inquiry['id']}/assign", json={"staff_id": people["s1_id"]}, headers=people["lead"]
+    )
+    assert resp.json()["error"]["code"] == "no_staff_assignment"
+    # The team admin sees it.
+    queue = (await client.get(API, params={"scope": "queue"}, headers=people["lead"])).json()
+    assert [i["id"] for i in queue["items"]] == [inquiry["id"]]
 
 
 async def test_status_transitions_and_history(client: AsyncClient, db: AsyncSession, people):
@@ -102,30 +96,22 @@ async def test_status_transitions_and_history(client: AsyncClient, db: AsyncSess
     iid = inquiry["id"]
 
     # scheduled -> completed is not allowed.
-    resp = await _status(client, people["s1"], iid, "completed")
+    resp = await _status(client, people["lead"], iid, "completed")
     assert resp.json()["error"]["code"] == "invalid_transition"
 
-    # Moving an unclaimed inquiry to processing claims it.
-    resp = await _status(client, people["s1"], iid, "processing")
+    resp = await _status(client, people["lead"], iid, "processing")
     assert resp.status_code == 200
-    assert resp.json()["assigned_staff"]["email"] == "s1@example.com"
+    assert resp.json()["assigned_staff"] is None
 
-    # Another staff member can't act on it.
-    resp = await _status(client, people["s2"], iid, "completed")
-    assert resp.status_code == 403
-    assert resp.json()["error"]["code"] == "not_assigned"
-
-    resp = await _status(client, people["s1"], iid, "completed")
+    resp = await _status(client, people["lead"], iid, "completed")
     body = resp.json()
     assert body["status"] == "completed"
     assert body["closed_at"] is not None
     assert [h["to_status"] for h in body["history"]] == ["scheduled", "processing", "completed"]
-    assert body["history"][-1]["actor"]["full_name"] == "Staff One"
+    assert body["history"][-1]["actor"]["full_name"] == "Team Lead"
     assert last_email("cust@example.com")["context"]["status"] == "completed"
 
-    # Final: staff can't change it, admin can reopen with a reason.
-    resp = await _status(client, people["s1"], iid, "processing")
-    assert resp.json()["error"]["code"] == "inquiry_closed"
+    # Final: reopening needs an admin and a reason.
     resp = await _status(client, people["admin"], iid, "processing")
     assert resp.json()["error"]["code"] == "reason_required"
     resp = await _status(client, people["admin"], iid, "processing", "Customer has a follow-up")
@@ -140,10 +126,10 @@ async def test_status_transitions_and_history(client: AsyncClient, db: AsyncSess
 
 async def test_cancel_requires_reason(client: AsyncClient, people):
     inquiry = await _create(client, people["cust"])
-    resp = await _status(client, people["s1"], inquiry["id"], "cancelled")
+    resp = await _status(client, people["lead"], inquiry["id"], "cancelled")
     assert resp.status_code == 400
     assert resp.json()["error"]["code"] == "reason_required"
-    resp = await _status(client, people["s1"], inquiry["id"], "cancelled", "Duplicate inquiry")
+    resp = await _status(client, people["lead"], inquiry["id"], "cancelled", "Duplicate inquiry")
     assert resp.status_code == 200
     assert resp.json()["history"][-1]["reason"] == "Duplicate inquiry"
 
@@ -151,23 +137,21 @@ async def test_cancel_requires_reason(client: AsyncClient, people):
 async def test_allowed_statuses(client: AsyncClient, people):
     inquiry = await _create(client, people["cust"])
     url = f"{API}/{inquiry['id']}/allowed-statuses"
-    assert (await client.get(url, headers=people["s1"])).json() == ["processing", "cancelled"]
-    await _status(client, people["s1"], inquiry["id"], "cancelled", "No longer needed")
-    assert (await client.get(url, headers=people["s1"])).json() == []
+    assert (await client.get(url, headers=people["lead"])).json() == ["processing", "cancelled"]
+    await _status(client, people["lead"], inquiry["id"], "cancelled", "No longer needed")
     assert (await client.get(url, headers=people["admin"])).json() == ["scheduled", "processing"]
 
 
 async def test_notes_internal_hidden_from_customer(client: AsyncClient, people):
     inquiry = await _create(client, people["cust"])
     iid = inquiry["id"]
-    await client.post(f"{API}/{iid}/claim", headers=people["s1"])
     await client.post(
-        f"{API}/{iid}/notes", json={"body": "Check passport expiry"}, headers=people["s1"]
+        f"{API}/{iid}/notes", json={"body": "Check passport expiry"}, headers=people["lead"]
     )
     await client.post(
         f"{API}/{iid}/notes",
         json={"body": "Hi! I'll call you tomorrow.", "is_internal": False},
-        headers=people["s1"],
+        headers=people["lead"],
     )
     # Customer notes are never internal, even if they ask.
     await client.post(
@@ -176,31 +160,19 @@ async def test_notes_internal_hidden_from_customer(client: AsyncClient, people):
 
     customer_view = (await client.get(f"{API}/{iid}", headers=people["cust"])).json()
     assert [n["body"] for n in customer_view["notes"]] == ["Hi! I'll call you tomorrow.", "Thanks!"]
-    staff_view = (await client.get(f"{API}/{iid}", headers=people["s1"])).json()
+    staff_view = (await client.get(f"{API}/{iid}", headers=people["lead"])).json()
     assert len(staff_view["notes"]) == 3
-    # Unassigned staff can't post on someone else's inquiry.
+    # Staff can't post on inquiries (the team admin handles them).
     resp = await client.post(f"{API}/{iid}/notes", json={"body": "x"}, headers=people["s2"])
-    assert resp.status_code == 403
+    assert resp.status_code == 404
 
 
-async def test_admin_assign_board_and_search(client: AsyncClient, people):
+async def test_admin_board_and_search(client: AsyncClient, people):
     inquiry = await _create(client, people["cust"], subject="Partner visa question")
     await _create(client, people["cust2"], subject="Visitor visa")
 
     staff = (await client.get("/api/v1/staff", headers=people["admin"])).json()
     assert {s["full_name"] for s in staff} == {"Staff One", "Staff Two"}
-
-    resp = await client.post(
-        f"{API}/{inquiry['id']}/assign", json={"staff_id": people["s1_id"]}, headers=people["admin"]
-    )
-    assert resp.status_code == 200
-    assert resp.json()["assigned_staff"]["email"] == "s1@example.com"
-    assert last_email("s1@example.com")["context"]["ref_no"] == inquiry["ref_no"]
-    # Only admins can assign.
-    resp = await client.post(
-        f"{API}/{inquiry['id']}/assign", json={"staff_id": people["s1_id"]}, headers=people["s1"]
-    )
-    assert resp.status_code == 403
 
     board = (await client.get("/api/v1/admin/inquiries/board", headers=people["admin"])).json()
     assert board["counts"] == {"scheduled": 2, "processing": 0, "completed": 0, "cancelled": 0}
