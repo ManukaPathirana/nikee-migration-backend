@@ -18,10 +18,12 @@ class VisaType(UUIDPkMixin, TimestampMixin, Base):
     is_active: Mapped[bool] = mapped_column(default=True, server_default=true())
     sort_order: Mapped[int] = mapped_column(default=0, server_default=text("0"))
 
+    # selectin: always loaded with the visa type, whichever path loaded it (async can't lazy-load).
     requirements: Mapped[list["DocumentRequirement"]] = relationship(
         back_populates="visa_type",
         cascade="all, delete-orphan",
         order_by="DocumentRequirement.sort_order",
+        lazy="selectin",
     )
     # Active team admins, oldest first: the first is the name customers see (app.core.viewer).
     team_admins: Mapped[list["User"]] = relationship(  # noqa: F821
