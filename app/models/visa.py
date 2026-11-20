@@ -23,6 +23,16 @@ class VisaType(UUIDPkMixin, TimestampMixin, Base):
         cascade="all, delete-orphan",
         order_by="DocumentRequirement.sort_order",
     )
+    # Active team admins, oldest first: the first is the name customers see (app.core.viewer).
+    team_admins: Mapped[list["User"]] = relationship(  # noqa: F821
+        primaryjoin=(
+            "and_(VisaType.id == foreign(User.team_id), User.role == 'admin', "
+            "User.is_active.is_(True), User.deleted_at.is_(None))"
+        ),
+        viewonly=True,
+        lazy="selectin",
+        order_by="User.created_at",
+    )
 
 
 class DocumentRequirement(UUIDPkMixin, TimestampMixin, Base):

@@ -154,7 +154,7 @@ async def test_reviews_flow_and_moderation(client: AsyncClient, h):
     )
     assert resp.status_code == 201, resp.text
     review = resp.json()
-    assert review["staff"]["full_name"] == "Staff One"
+    assert review["staff"]["full_name"] != "Staff One"  # customers see the team, not staff
     resp = await client.post(
         "/api/v1/reviews", json={"inquiry_id": inquiry["id"], "rating": 4}, headers=h["cust"]
     )

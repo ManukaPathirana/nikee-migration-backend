@@ -14,6 +14,7 @@ from app.schemas.visa import (
     AmountIn,
     ApplicationDetail,
     AssignIn,
+    ChangesIn,
     CheckoutIn,
     CheckoutOut,
     DownloadUrlOut,
@@ -127,6 +128,17 @@ async def send_confirmation(
             data_confirmation=data_confirmation,
         )
     )
+
+
+@router.post(
+    "/applications/{app_id}/confirmation/request-changes", response_model=ApplicationDetail
+)
+async def request_confirmation_changes(
+    app_id: uuid.UUID, data: ChangesIn, user: CustomerUser, db: DbSession
+) -> ApplicationDetail:
+    """Customer: send the finalized application / data confirmation back with what to fix."""
+    app = await apps.get_application(db, app_id, user)
+    return apps.to_detail(await cases.request_confirmation_changes(db, app, user, data.reason))
 
 
 @router.post("/applications/{app_id}/confirmation/recall", response_model=ApplicationDetail)

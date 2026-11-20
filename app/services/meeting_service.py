@@ -20,6 +20,7 @@ from app.core.config import settings
 from app.core.errors import BadRequest, Conflict, Forbidden, NotFound
 from app.core.permissions import can_access_team, is_admin
 from app.core.security import utcnow
+from app.core.viewer import contact_name
 from app.models import (
     Inquiry,
     InquiryStatus,
@@ -148,7 +149,12 @@ def _email_context(meeting: Meeting, recipient: User, **extra: object) -> dict[s
     slot = meeting.confirmed_slot
     return {
         "name": recipient.full_name,
-        "how": f"{MODE_LABEL[meeting.mode]} with {meeting.staff.full_name}",
+        "how": f"{MODE_LABEL[meeting.mode]} with "
+        + (
+            contact_name(meeting.inquiry.visa_type)
+            if recipient.id == meeting.customer_id
+            else meeting.staff.full_name
+        ),
         "where": where(meeting),
         "link": meeting.meeting_link,
         "when": (
@@ -364,7 +370,7 @@ async def _announce_booking(
         user_id=meeting.customer_id,
         type="meeting_confirmed",
         title="Your meeting time has changed" if rebooked else "Your meeting is booked",
-        body=f"{meeting.inquiry.ref_no} with {meeting.staff.full_name}: {details}",
+        body=f"{meeting.inquiry.ref_no} with {contact_name(meeting.inquiry.visa_type)}: {details}",
         data=data,
     )
     admins = await _super_admins(db)
@@ -511,7 +517,7 @@ async def _announce_proposal(db: AsyncSession, meeting: Meeting) -> None:
         user_id=meeting.customer_id,
         type="meeting_proposed",
         title="Choose a meeting time",
-        body=f"{meeting.staff.full_name} proposed {len(meeting.slots)} time(s) for "
+        body=f"{contact_name(meeting.inquiry.visa_type)} proposed {len(meeting.slots)} time(s) for "
         f"{meeting.inquiry.ref_no}.",
         data={"meeting_id": str(meeting.id)},
     )
@@ -524,7 +530,8 @@ async def _announce_proposal(db: AsyncSession, meeting: Meeting) -> None:
             meeting,
             meeting.customer,
             heading="Let's find a time to meet",
-            message=f"{meeting.staff.full_name} would like to meet about your inquiry. "
+            message=f"{contact_name(meeting.inquiry.visa_type)} would like to meet about your "
+            "inquiry. "
             "Open the app to pick the time that suits you, or ask for another time.",
             slots=[fmt_slot(s.start_at, s.end_at) for s in meeting.slots],
             note=meeting.staff_note,

@@ -1,8 +1,8 @@
 import uuid
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from app.models.enums import InquiryStatus, UserRole
 from app.schemas.common import ORMModel
@@ -17,6 +17,23 @@ class UserBrief(ORMModel):
     full_name: str
     email: str
     role: UserRole
+
+    @model_validator(mode="wrap")
+    @classmethod
+    def _team_admin_for_customers(cls, data: Any, handler: Any) -> "UserBrief":
+        """Customers see the team admin wherever a staff member would appear."""
+        from app.core.viewer import public_person, viewer_is_customer
+
+        if viewer_is_customer():
+            contact = public_person(data)
+            if contact is not None:
+                return cls(
+                    id=contact.id,
+                    full_name=contact.full_name,
+                    email=contact.email,
+                    role=UserRole.ADMIN,
+                )
+        return handler(data)
 
 
 class TeamBrief(ORMModel):

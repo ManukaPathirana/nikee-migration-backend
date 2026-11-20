@@ -83,12 +83,8 @@ async def test_public_company_and_visa_types(client: AsyncClient, db: AsyncSessi
     assert resp.json()["website_url"] == "https://nikeemigration.com"
 
     resp = await client.get("/api/v1/visa-types")
-    assert [r["name"] for r in resp.json()[0]["requirements"]] == [
-        "Passport",
-        "Visa grant",
-        "Offer letter",
-        "Statement of purpose",
-    ]
+    # Public pages list only the documents needed to start.
+    assert [r["name"] for r in resp.json()[0]["requirements"]] == ["Passport", "Visa grant"]
     assert (await client.get("/api/v1/visa-types/student")).status_code == 200
     assert (await client.get(f"/api/v1/visa-types/{visa.id}")).status_code == 200
 
@@ -114,14 +110,11 @@ async def test_intake_unlocks_only_passport_and_visa_grant(
     assert app["status"] == "draft"
     assert app["stage"] == "intake"
     assert app["ref_no"].startswith("NM-C-")
+    # The customer sees only the intake documents until the deposit is approved.
     locked = {i["requirement"]["name"]: i["locked"] for i in app["checklist"]}
-    assert locked == {
-        "Passport": False,
-        "Visa grant": False,
-        "Offer letter": True,
-        "Statement of purpose": True,
-    }
-    ids = {i["requirement"]["name"]: i["requirement"]["id"] for i in app["checklist"]}
+    assert locked == {"Passport": False, "Visa grant": False}
+    assert app["progress"]["required"] == 2
+    ids = {r.name: str(r.id) for r in visa.requirements}
 
     # Can't submit without both intake documents; can't upload locked ones.
     resp = await client.post(f"/api/v1/applications/{app['id']}/submit", headers=customer)

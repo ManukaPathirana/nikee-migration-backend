@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 
 from icalendar import Calendar, Event, vCalAddress, vText
 
+from app.core.viewer import team_contact
 from app.models import Meeting, MeetingMode
 from app.services.email_service import Attachment
 
@@ -40,8 +41,12 @@ def build_ics(meeting: Meeting, *, cancel: bool = False) -> bytes:
     event.add("dtstart", slot.start_at.astimezone(UTC))
     event.add("dtend", slot.end_at.astimezone(UTC))
     event.add("summary", f"Nikee Migrations: {meeting.inquiry.subject} ({meeting.inquiry.ref_no})")
+    # Customers deal with the team admin, so the invite names them, not the staff member.
+    contact = team_contact(meeting.inquiry.visa_type)
+    host_name = contact.full_name if contact else "Nikee Migrations"
+    host_email = (contact.email if contact else "") or meeting.staff.email
     description = [
-        f"{MODE_LABEL[meeting.mode]} with {meeting.staff.full_name}",
+        f"{MODE_LABEL[meeting.mode]} with {host_name}",
         f"Inquiry: {meeting.inquiry.ref_no} — {meeting.inquiry.subject}",
     ]
     if meeting.meeting_link:
@@ -54,10 +59,10 @@ def build_ics(meeting: Meeting, *, cancel: bool = False) -> bytes:
         event.add("url", meeting.meeting_link)
     event.add("status", "CANCELLED" if cancel else "CONFIRMED")
 
-    organizer = vCalAddress(f"mailto:{meeting.staff.email}")
-    organizer.params["cn"] = vText(meeting.staff.full_name)
+    organizer = vCalAddress(f"mailto:{host_email}")
+    organizer.params["cn"] = vText(host_name)
     event["organizer"] = organizer
-    for person in (meeting.customer, meeting.staff):
+    for person in (meeting.customer,):
         attendee = vCalAddress(f"mailto:{person.email}")
         attendee.params["cn"] = vText(person.full_name)
         attendee.params["role"] = vText("REQ-PARTICIPANT")

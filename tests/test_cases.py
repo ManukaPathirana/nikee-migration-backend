@@ -63,7 +63,9 @@ async def _case(client: AsyncClient, ctx: dict) -> dict:
         headers=ctx["cust"],
     )
     app = resp.json()
-    ids = {i["requirement"]["name"]: i["requirement"]["id"] for i in app["checklist"]}
+    # Before the deposit is approved the customer only sees the intake documents.
+    assert [i["requirement"]["name"] for i in app["checklist"]] == ["Passport", "Visa grant"]
+    ids = {r.name: str(r.id) for r in ctx["visa"].requirements}
     for name in ("Passport", "Visa grant"):
         await client.post(
             f"{API}/applications/{app['id']}/documents",
@@ -109,6 +111,11 @@ async def test_full_visa_case_journey(client: AsyncClient, ctx):
     )
     assert resp.json()["stage"] == "contract_pending"
     assert resp.json()["assigned_staff"]["email"] == "staff@example.com"
+    # The customer sees the team admin, never the staff member handling the case.
+    mine = (await client.get(case, headers=ctx["cust"])).json()["assigned_staff"]
+    assert mine["email"] == "lead@example.com"
+    note = (await client.get(f"{API}/notifications", headers=ctx["cust"])).json()["items"][0]
+    assert "staff@example.com" not in str(note)
     # Only that staff member sees it.
     assert (await client.get(case, headers=ctx["other"])).status_code == 404
 
@@ -196,6 +203,12 @@ async def test_full_visa_case_journey(client: AsyncClient, ctx):
     )
     assert resp.json()["stage"] == "agreement_review"
     resp = await client.post(f"{case}/agreement/approve", headers=ctx["staff"])
+    # Now the customer sees the whole checklist.
+    names = [
+        i["requirement"]["name"]
+        for i in (await client.get(case, headers=ctx["cust"])).json()["checklist"]
+    ]
+    assert "Offer letter" in names
     detail = resp.json()
     assert detail["stage"] == "documents" and detail["documents_unlocked"] is True
     assert all(not i["locked"] for i in detail["checklist"])
@@ -251,6 +264,37 @@ async def test_full_visa_case_journey(client: AsyncClient, ctx):
         files={
             "final_application": ("final.pdf", make_pdf("Final"), "application/pdf"),
             "data_confirmation": ("confirm.pdf", make_pdf("Confirm"), "application/pdf"),
+        },
+        headers=ctx["staff"],
+    )
+    assert resp.json()["stage"] == "confirmation"
+
+    # The customer finds a mistake and sends both papers back with the reason.
+    resp = await client.post(
+        f"{case}/confirmation/request-changes",
+        json={"reason": "My date of birth is wrong"},
+        headers=ctx["staff"],
+    )
+    assert resp.status_code == 403
+    resp = await client.post(
+        f"{case}/confirmation/request-changes",
+        json={"reason": "My date of birth is wrong"},
+        headers=ctx["cust"],
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["stage"] == "confirmation_pending"
+    papers = ("final_application", "data_confirmation")
+    recalled = [f for f in resp.json()["files"] if f["recalled_at"] and f["kind"] in papers]
+    assert {f["kind"] for f in recalled} == set(papers)
+    assert all(f["recall_reason"] == "My date of birth is wrong" for f in recalled)
+    staff_inbox = (await client.get(f"{API}/notifications", headers=ctx["staff"])).json()["items"]
+    assert "asked for changes" in staff_inbox[0]["title"]
+    # Staff fixes them and sends new ones.
+    resp = await client.post(
+        f"{case}/confirmation",
+        files={
+            "final_application": ("final2.pdf", make_pdf("Final v2"), "application/pdf"),
+            "data_confirmation": ("confirm2.pdf", make_pdf("Confirm v2"), "application/pdf"),
         },
         headers=ctx["staff"],
     )

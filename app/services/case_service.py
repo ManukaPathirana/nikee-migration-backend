@@ -15,6 +15,7 @@ from app.core.config import settings
 from app.core.errors import BadRequest, Forbidden, NotFound
 from app.core.permissions import can_access_team, is_admin
 from app.core.security import utcnow
+from app.core.viewer import contact_name
 from app.models import (
     CaseFile,
     CaseFileKind,
@@ -300,7 +301,7 @@ async def assign(
         app,
         app.customer_id,
         "Your consultant is ready",
-        f"{staff.full_name} will look after your {app.visa_type.name} visa case.",
+        f"{contact_name(app.visa_type)} will look after your {app.visa_type.name} visa case.",
     )
     await db.commit()
     return await _reload(db, app, actor)
@@ -715,6 +716,41 @@ async def send_confirmation(
         "Please review it and sign the data confirmation.",
     )
     return app
+
+
+async def request_confirmation_changes(
+    db: AsyncSession, app: VisaApplication, customer: User, reason: str
+) -> VisaApplication:
+    """Customer: something in the finalized application or the data confirmation is wrong.
+    Both go back to the staff member, who fixes them and sends new ones."""
+    if app.customer_id != customer.id:
+        raise Forbidden("Only the applicant can do this")
+    require_stage(app, CaseStage.CONFIRMATION)
+    reason = reason.strip()
+    now = utcnow()
+    for kind in (CaseFileKind.FINAL_APPLICATION, CaseFileKind.DATA_CONFIRMATION):
+        f = active_file(app, kind)
+        if f is not None:
+            f.recalled_at = now
+            f.recall_reason = reason
+    set_stage(app, CaseStage.CONFIRMATION_PENDING)
+    audit(
+        db,
+        actor_id=customer.id,
+        action="case.request_changes",
+        entity="visa_application",
+        entity_id=app.id,
+        meta={"reason": reason},
+    )
+    _tell(
+        db,
+        app,
+        app.assigned_staff_id,
+        f"{app.ref_no}: customer asked for changes",
+        f"{app.customer.full_name}: {reason}. Fix the papers and send them again.",
+    )
+    await db.commit()
+    return await _reload(db, app, customer)
 
 
 async def recall_confirmation(

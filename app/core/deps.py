@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import Forbidden, Unauthorized
 from app.core.security import decode_access_token
+from app.core.viewer import set_viewer
 from app.db.session import SessionLocal
 from app.models import User, UserRole
 
@@ -38,6 +39,7 @@ async def get_current_user(
     user = await db.get(User, user_id)
     if user is None or not user.is_active:
         raise Unauthorized("Account not found or disabled", code="invalid_token")
+    set_viewer(user.role)
     return user
 
 

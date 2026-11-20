@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -73,6 +73,18 @@ class StaffBriefOut(ORMModel):
     id: uuid.UUID
     full_name: str
     email: str
+
+    @model_validator(mode="wrap")
+    @classmethod
+    def _team_admin_for_customers(cls, data: Any, handler: Any) -> "StaffBriefOut":
+        """Customers see their team admin, not the staff member handling the case."""
+        from app.core.viewer import public_person, viewer_is_customer
+
+        if viewer_is_customer():
+            contact = public_person(data)
+            if contact is not None:
+                return cls(id=contact.id, full_name=contact.full_name, email=contact.email)
+        return handler(data)
 
 
 class ApplicationSummary(BaseModel):
@@ -177,6 +189,10 @@ class AmountIn(BaseModel):
     payment_type: str = Field(
         "", max_length=120, description="What the payment is for; empty = the default label"
     )
+
+
+class ChangesIn(BaseModel):
+    reason: str = Field(min_length=3, max_length=1000)
 
 
 class CheckoutIn(BaseModel):

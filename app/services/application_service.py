@@ -163,9 +163,20 @@ def _latest_by_requirement(app: VisaApplication) -> dict[uuid.UUID, ApplicationD
     return latest
 
 
+def visible_requirements(app: VisaApplication) -> list:
+    """Customers see only the documents to start with (passport, visa grant) until their signed
+    contract and deposit are approved; then the whole checklist."""
+    from app.core.viewer import viewer_is_customer
+
+    reqs = list(app.visa_type.requirements)
+    if viewer_is_customer() and not documents_unlocked(app):
+        reqs = [r for r in reqs if r.is_intake]
+    return reqs
+
+
 def _progress(app: VisaApplication) -> Progress:
     latest = _latest_by_requirement(app)
-    mandatory = [r for r in app.visa_type.requirements if r.is_mandatory]
+    mandatory = [r for r in visible_requirements(app) if r.is_mandatory]
     uploaded = approved = 0
     for req in mandatory:
         doc = latest.get(req.id)
@@ -207,7 +218,7 @@ def to_detail(app: VisaApplication) -> ApplicationDetail:
             document=DocumentOut.model_validate(latest[req.id]) if req.id in latest else None,
             locked=not (unlocked or req.is_intake),
         )
-        for req in app.visa_type.requirements
+        for req in visible_requirements(app)
     ]
     others = [DocumentOut.model_validate(d) for d in app.documents if d.requirement_id is None]
     return ApplicationDetail(
