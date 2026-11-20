@@ -87,6 +87,8 @@ async def get_inquiry(db: AsyncSession, inquiry_id: uuid.UUID, user: User) -> In
         raise NotFound("Inquiry not found")
     if _is_staff(user) and not can_access_team(user, inquiry.visa_type_id):
         raise NotFound("Inquiry not found")  # another team's inquiry
+    if user.role == UserRole.STAFF and inquiry.kind == "general":
+        raise NotFound("Inquiry not found")  # handled by the team admin
     return inquiry
 
 
@@ -107,6 +109,8 @@ async def list_inquiries(
         scope_team = team_scope(user) or team_id
         if scope_team is not None:
             query = query.where(Inquiry.visa_type_id == scope_team)
+    if user.role == UserRole.STAFF:
+        query = query.where(Inquiry.kind == "consultation")  # general ones are the admin's
     if not _is_staff(user):
         query = query.where(Inquiry.customer_id == user.id)
     elif scope == "queue":
@@ -198,6 +202,7 @@ async def create_inquiry(
     preferred_contact_time: str | None,
     application_id: uuid.UUID | None,
     visa_type_id: uuid.UUID,
+    kind: str = "consultation",
 ) -> Inquiry:
     visa = await db.get(VisaType, visa_type_id)
     if visa is None or not visa.is_active:
@@ -214,6 +219,7 @@ async def create_inquiry(
         ref_no=await _next_ref_no(db),
         customer_id=customer.id,
         visa_type_id=visa.id,
+        kind=kind,
         application_id=application_id,
         subject=subject.strip(),
         category=category,
@@ -306,6 +312,11 @@ async def claim(db: AsyncSession, inquiry: Inquiry, staff: User) -> None:
 
 
 async def assign(db: AsyncSession, inquiry: Inquiry, admin: User, staff_id: uuid.UUID) -> None:
+    if inquiry.kind == "general":
+        raise BadRequest(
+            "General inquiries are answered by the team admin, not assigned to staff",
+            code="general_inquiry",
+        )
     staff = await db.get(User, staff_id)
     if staff is None or staff.role != UserRole.STAFF or not staff.is_active:
         raise BadRequest("Choose an active staff member", code="invalid_staff")

@@ -7,6 +7,8 @@ from pydantic import BaseModel, Field, model_validator
 from app.models.enums import InquiryStatus, UserRole
 from app.schemas.common import ORMModel
 
+InquiryKind = Literal["consultation", "general"]
+
 InquiryCategory = Literal[
     "general", "visa_application", "documents", "payment", "appointment", "other"
 ]
@@ -46,6 +48,8 @@ class TeamBrief(ORMModel):
 
 class InquiryCreate(BaseModel):
     visa_type_id: uuid.UUID  # which team handles it
+    # consultation: meet the migration agent; general: a question for the team admin.
+    kind: InquiryKind = "consultation"
     subject: str = Field(min_length=3, max_length=200)
     category: InquiryCategory = "general"
     description: str = Field(min_length=10, max_length=5000)
@@ -57,6 +61,7 @@ class InquiryOut(ORMModel):
     id: uuid.UUID
     ref_no: str
     visa_type: TeamBrief
+    kind: str = "consultation"
     subject: str
     category: str
     description: str

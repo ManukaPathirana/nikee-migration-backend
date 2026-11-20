@@ -83,6 +83,8 @@ class CalendarDay(BaseModel):
 class CalendarOut(BaseModel):
     timezone: str
     slot_minutes: int
+    meeting_minutes: int = 60  # a meeting takes this long (two slots)
+    team_id: uuid.UUID | None = None  # None = the migration agent's calendar
     day_start: str
     day_end: str
     days: list[CalendarDay]
@@ -99,6 +101,8 @@ class InquiryRef(ORMModel):
     id: uuid.UUID
     ref_no: str
     subject: str
+    kind: str = "consultation"
+    visa_type_id: uuid.UUID | None = None  # the team (for its calendar)
 
 
 class MeetingOut(ORMModel):

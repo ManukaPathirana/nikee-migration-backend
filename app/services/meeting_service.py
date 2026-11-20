@@ -45,7 +45,8 @@ SLOT_MINUTES = 30
 DAY_START = time(9, 0)
 DAY_END = time(17, 0)
 WORKDAYS = {0, 1, 2, 3, 4}  # Monday-Friday
-_BOOKING_LOCK = 731_001  # pg advisory lock: one booking at a time
+MEETING_MINUTES = 60  # a meeting takes two back-to-back 30-minute slots
+_BOOKING_LOCK = 731_001  # pg advisory lock: one booking at a time per calendar
 
 
 # ---------------------------------------------------------------- helpers
@@ -87,34 +88,60 @@ def _can_manage(meeting: Meeting, user: User) -> bool:
     return _admin_of(meeting, user) or meeting.staff_id == user.id
 
 
+def calendar_team(inquiry: Inquiry) -> uuid.UUID | None:
+    """Which calendar a meeting goes in: None = the migration agent's shared calendar
+    (consultations), else the team admin's calendar of that team (general inquiries)."""
+    return inquiry.visa_type_id if inquiry.kind == "general" else None
+
+
 def _validate_booking(start: datetime, end: datetime) -> None:
-    """A slot from the shared calendar: 30 minutes on the hour or half hour, weekdays 9-5."""
+    """Two back-to-back 30-minute slots (1 hour) starting on the hour or half hour, weekdays
+    9-5 in the business time zone."""
     local = start.astimezone(_tz())
-    if end - start != timedelta(minutes=SLOT_MINUTES):
-        raise BadRequest("Meetings are 30 minutes long", code="invalid_slot_length")
+    if end - start != timedelta(minutes=MEETING_MINUTES):
+        raise BadRequest(
+            "Meetings are 1 hour long (two 30-minute slots)", code="invalid_slot_length"
+        )
     if local.minute not in (0, 30) or local.second or local.microsecond:
         raise BadRequest("Pick a time on the hour or half hour", code="invalid_slot")
     if local.weekday() not in WORKDAYS:
         raise BadRequest("Meetings can be booked Monday to Friday", code="outside_hours")
-    if local.time() < DAY_START or (local + timedelta(minutes=SLOT_MINUTES)).time() > DAY_END:
+    if local.time() < DAY_START or (local + timedelta(minutes=MEETING_MINUTES)).time() > DAY_END:
         raise BadRequest("Meetings can be booked between 9 AM and 5 PM", code="outside_hours")
     if start <= utcnow() + timedelta(minutes=15):
         raise BadRequest("Pick a time at least 15 minutes from now", code="slot_in_past")
 
 
+def _in_calendar(query: Select, team_id: uuid.UUID | None) -> Select:
+    """Limit a meetings query (already joined to Inquiry) to one calendar."""
+    if team_id is None:
+        return query.where(Inquiry.kind == "consultation")
+    return query.where(Inquiry.kind == "general", Inquiry.visa_type_id == team_id)
+
+
 async def _ensure_free(
-    db: AsyncSession, start: datetime, end: datetime, *, except_id: uuid.UUID | None
+    db: AsyncSession,
+    start: datetime,
+    end: datetime,
+    *,
+    except_id: uuid.UUID | None,
+    team_id: uuid.UUID | None = None,
 ) -> None:
-    """Locks booking for this transaction and checks no confirmed meeting overlaps."""
-    await db.execute(text("SELECT pg_advisory_xact_lock(:k)"), {"k": _BOOKING_LOCK})
-    query = (
+    """Locks booking in this calendar for this transaction and checks nothing overlaps."""
+    await db.execute(
+        text("SELECT pg_advisory_xact_lock(:k, hashtext(:t))"),
+        {"k": _BOOKING_LOCK, "t": str(team_id or "agent")},
+    )
+    query = _in_calendar(
         select(Meeting.id)
         .join(MeetingSlot, MeetingSlot.id == Meeting.confirmed_slot_id)
+        .join(Inquiry, Inquiry.id == Meeting.inquiry_id)
         .where(
             Meeting.status == M.CONFIRMED,
             MeetingSlot.start_at < end,
             MeetingSlot.end_at > start,
-        )
+        ),
+        team_id,
     )
     if except_id is not None:
         query = query.where(Meeting.id != except_id)
@@ -241,7 +268,13 @@ async def create_meeting(
         raise NotFound("Inquiry not found")
     if inquiry.status in (InquiryStatus.COMPLETED, InquiryStatus.CANCELLED):
         raise BadRequest("This inquiry is closed", code="inquiry_closed")
-    if staff.role == UserRole.STAFF:
+    if inquiry.kind == "general":
+        # General inquiries: the team admin meets the customer, in their own team calendar.
+        if staff.role != UserRole.ADMIN:
+            raise Forbidden(
+                "The team admin books meetings for general inquiries", code="team_admin_only"
+            )
+    elif staff.role == UserRole.STAFF:
         if inquiry.assigned_staff_id is None:
             inquiry.assigned_staff_id = staff.id  # scheduling a meeting claims the inquiry
         elif inquiry.assigned_staff_id != staff.id:
@@ -265,10 +298,13 @@ async def create_meeting(
         raise BadRequest("Book one time from the calendar", code="one_slot")
     slot = slots[0]
     _validate_booking(slot.start_at, slot.end_at)
-    await _ensure_free(db, slot.start_at, slot.end_at, except_id=None)
+    await _ensure_free(
+        db, slot.start_at, slot.end_at, except_id=None, team_id=calendar_team(inquiry)
+    )
 
-    # The assigned consultant hosts the meeting (also when the admin schedules it).
-    host_id = inquiry.assigned_staff_id
+    # Consultations: the assigned consultant hosts (also when the admin schedules it).
+    # General inquiries: the team admin who books it hosts it.
+    host_id = staff.id if inquiry.kind == "general" else inquiry.assigned_staff_id
 
     meeting = Meeting(
         inquiry_id=inquiry.id,
@@ -311,7 +347,13 @@ async def propose_again(
         raise BadRequest("Book one time from the calendar", code="one_slot")
     slot = slots[0]
     _validate_booking(slot.start_at, slot.end_at)
-    await _ensure_free(db, slot.start_at, slot.end_at, except_id=meeting.id)
+    await _ensure_free(
+        db,
+        slot.start_at,
+        slot.end_at,
+        except_id=meeting.id,
+        team_id=calendar_team(meeting.inquiry),
+    )
     was_booked = meeting.confirmed_slot_id is not None
     booked = MeetingSlot(start_at=slot.start_at, end_at=slot.end_at, is_selected=True)
     meeting.confirmed_slot = None
@@ -373,7 +415,7 @@ async def _announce_booking(
         body=f"{meeting.inquiry.ref_no} with {contact_name(meeting.inquiry.visa_type)}: {details}",
         data=data,
     )
-    admins = await _super_admins(db)
+    admins = await _super_admins(db) if meeting.inquiry.kind == "consultation" else []
     for admin in admins:
         if admin.id == by.id:
             continue
@@ -420,6 +462,10 @@ async def decline(db: AsyncSession, meeting: Meeting, user: User, reason: str) -
         raise Forbidden("Only the super admin can decline a meeting time", code="not_super_admin")
     if meeting.status != M.CONFIRMED:
         raise BadRequest("Only booked meetings can be declined", code="invalid_status")
+    if meeting.inquiry.kind != "consultation":
+        raise BadRequest(
+            "This meeting is with the team admin, not in your calendar", code="not_consultation"
+        )
     slot = meeting.confirmed_slot
     when = fmt_slot(slot.start_at, slot.end_at) if slot else "the booked time"
     meeting.status = M.RESCHEDULE_REQUESTED
@@ -452,22 +498,28 @@ async def decline(db: AsyncSession, meeting: Meeting, user: User, reason: str) -
     await db.commit()
 
 
-async def calendar(db: AsyncSession, user: User, start: date, days: int) -> dict[str, object]:
-    """The shared calendar: every 30-minute slot of the working days from `start`, with the
-    meeting that holds it. Staff and admins of every team see it; meeting details only for
-    meetings they may open."""
+async def calendar(
+    db: AsyncSession, user: User, start: date, days: int, team_id: uuid.UUID | None = None
+) -> dict[str, object]:
+    """Every 30-minute slot of the working days from `start`, with the meeting that holds it.
+    team_id None: the migration agent's calendar (consultations; every team sees it).
+    team_id set: that team admin's calendar (general inquiries; that team and the super admin).
+    Meeting details only for meetings the viewer may open."""
     tz = _tz()
     first = datetime.combine(start, DAY_START, tz)
     last = datetime.combine(start + timedelta(days=days), DAY_END, tz)
     rows = await db.execute(
-        select(Meeting, MeetingSlot)
-        .join(MeetingSlot, MeetingSlot.id == Meeting.confirmed_slot_id)
-        .where(
-            Meeting.status.in_([M.CONFIRMED, M.COMPLETED]),
-            MeetingSlot.start_at < last,
-            MeetingSlot.end_at > first,
-        )
-        .options(
+        _in_calendar(
+            select(Meeting, MeetingSlot)
+            .join(MeetingSlot, MeetingSlot.id == Meeting.confirmed_slot_id)
+            .join(Inquiry, Inquiry.id == Meeting.inquiry_id)
+            .where(
+                Meeting.status.in_([M.CONFIRMED, M.COMPLETED]),
+                MeetingSlot.start_at < last,
+                MeetingSlot.end_at > first,
+            ),
+            team_id,
+        ).options(
             joinedload(Meeting.inquiry).joinedload(Inquiry.visa_type),
             joinedload(Meeting.staff),
         )
@@ -505,6 +557,8 @@ async def calendar(db: AsyncSession, user: User, start: date, days: int) -> dict
     return {
         "timezone": settings.business_timezone,
         "slot_minutes": SLOT_MINUTES,
+        "meeting_minutes": MEETING_MINUTES,
+        "team_id": team_id,
         "day_start": DAY_START.strftime("%H:%M"),
         "day_end": DAY_END.strftime("%H:%M"),
         "days": out_days,
@@ -596,7 +650,7 @@ async def cancel(db: AsyncSession, meeting: Meeting, user: User, reason: str) ->
         body=reason,
         data={"meeting_id": str(meeting.id)},
     )
-    if was_confirmed:
+    if was_confirmed and meeting.inquiry.kind == "consultation":
         slot = meeting.confirmed_slot
         await notify_super_admins(
             db,
@@ -697,13 +751,14 @@ async def request_reschedule(db: AsyncSession, meeting: Meeting, user: User, not
         body=meeting.customer_note,
         data={"meeting_id": str(meeting.id)},
     )
-    await notify_super_admins(
-        db,
-        type="meeting_reschedule_requested",
-        title=f"Customer asked for another time — {meeting.inquiry.ref_no}",
-        body=f"{meeting.customer.full_name}: {meeting.customer_note}",
-        data={"meeting_id": str(meeting.id)},
-    )
+    if meeting.inquiry.kind == "consultation":
+        await notify_super_admins(
+            db,
+            type="meeting_reschedule_requested",
+            title=f"Customer asked for another time — {meeting.inquiry.ref_no}",
+            body=f"{meeting.customer.full_name}: {meeting.customer_note}",
+            data={"meeting_id": str(meeting.id)},
+        )
     await db.commit()
     await job_queue.send_email(
         to=meeting.staff.email,
@@ -768,7 +823,11 @@ async def send_due_reminders(db: AsyncSession, now: datetime | None = None) -> i
                         message="Here are the details.",
                     ),
                 )
-            admin_ids = [a.id for a in await _super_admins(db)]
+            admin_ids = (
+                [a.id for a in await _super_admins(db)]
+                if meeting.inquiry.kind == "consultation"
+                else []
+            )
             for person_id in {meeting.customer_id, meeting.staff_id, *admin_ids}:
                 notify(
                     db,

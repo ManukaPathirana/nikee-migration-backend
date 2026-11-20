@@ -5,6 +5,8 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Query, status
 
 from app.core.deps import CurrentUser, CustomerUser, DbSession, StaffOrAdmin
+from app.core.errors import NotFound
+from app.core.permissions import can_access_team
 from app.models import MeetingStatus
 from app.schemas.common import Page, PageParams, page_params
 from app.schemas.meeting import (
@@ -73,10 +75,14 @@ async def shared_calendar(
     db: DbSession,
     start: date | None = None,
     days: Annotated[int, Query(ge=1, le=42)] = 14,
+    team_id: uuid.UUID | None = None,
 ) -> CalendarOut:
-    """The shared booking calendar (all teams): 30-minute slots, weekdays 9-5, free or busy."""
+    """30-minute slots, weekdays 9-5, free or busy. Without team_id: the migration agent's
+    calendar (every team). With team_id: that team admin's calendar (that team + super admin)."""
+    if team_id is not None and not can_access_team(user, team_id):
+        raise NotFound("Calendar not found")
     first = start or svc.business_today()
-    return CalendarOut.model_validate(await svc.calendar(db, user, first, days))
+    return CalendarOut.model_validate(await svc.calendar(db, user, first, days, team_id))
 
 
 @router.post("/{meeting_id}/decline", response_model=MeetingOut)

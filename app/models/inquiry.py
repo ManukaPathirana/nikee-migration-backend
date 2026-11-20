@@ -27,6 +27,12 @@ class Inquiry(UUIDPkMixin, TimestampMixin, Base):
     application_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("visa_applications.id", ondelete="SET NULL")
     )
+    # consultation: a meeting with the migration agent (super admin), booked by the assigned
+    # staff member in the agent's calendar. general: handled by the team admin, who books meetings
+    # in their own team calendar.
+    kind: Mapped[str] = mapped_column(
+        String(20), default="consultation", server_default="consultation"
+    )
     subject: Mapped[str] = mapped_column(String(200))
     category: Mapped[str] = mapped_column(String(60))
     description: Mapped[str] = mapped_column(Text)

@@ -93,7 +93,12 @@ OTP codes: 6 digits, 10 min, max 5 wrong attempts; stored as HMAC hashes.
   (acting on an unclaimed one claims it); cancel and reopen need a reason; every change writes
   history + audit + customer notification + email (`inquiry_update.html`).
 
-## Meetings API (shared calendar)
+## Meetings API (agent + team calendars)
+- Two inquiry kinds (`inquiries.kind`): `consultation` (meet the migration agent = super admin;
+  team admin assigns staff, staff books in the agent's shared calendar) and `general` (handled by
+  the team admin only: staff can't see it, it can't be assigned; the team admin books meetings in
+  their own team calendar, `GET /meetings/calendar?team_id=`). `meeting_service.calendar_team()`.
+- Meetings are 1 hour = two 30-minute slots (`MEETING_MINUTES`); one meeting at a time per calendar.
 - The super admin attends every meeting, so all teams share ONE calendar: 30-minute slots,
   Mon-Fri 9:00-17:00 in `BUSINESS_TIMEZONE`, one meeting per slot (checked under a pg advisory
   lock in `meeting_service._ensure_free`). Rules: `SLOT_MINUTES`, `DAY_START/END`, `WORKDAYS`.

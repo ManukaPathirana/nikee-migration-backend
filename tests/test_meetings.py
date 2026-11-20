@@ -21,8 +21,8 @@ def _workday(days_ahead: int) -> date:
     return d
 
 
-def _slot(days_ahead: int = 2, hour: int = 10, minute: int = 0, minutes: int = 30) -> dict:
-    """A slot of the shared calendar: business time zone, weekdays 9-5."""
+def _slot(days_ahead: int = 2, hour: int = 10, minute: int = 0, minutes: int = 60) -> dict:
+    """A meeting time: two 30-minute slots (1 hour), business time zone, weekdays 9-5."""
     tz = ZoneInfo(settings.business_timezone)
     start = datetime.combine(_workday(days_ahead), time(hour, minute), tz)
     return {
@@ -110,6 +110,8 @@ async def test_shared_calendar_blocks_double_booking_across_teams(
     resp = await _book(client, ctx | {"inquiry_id": other}, slot, headers=ctx["s2"])
     assert resp.status_code == 409 and resp.json()["error"]["code"] == "slot_taken"
     resp = await _book(client, ctx | {"inquiry_id": other}, _slot(3, 12), headers=ctx["s2"])
+    assert resp.status_code == 409  # 12:00 overlaps the second half of 11:30-12:30
+    resp = await _book(client, ctx | {"inquiry_id": other}, _slot(3, 12, 30), headers=ctx["s2"])
     assert resp.status_code == 201
 
     # Everyone (staff of any team, admins) sees the busy slots; customers can't.
@@ -120,7 +122,7 @@ async def test_shared_calendar_blocks_double_booking_across_teams(
     day = cal.json()["days"][0]
     assert len(day["slots"]) == 16  # 9:00-17:00 in 30-minute slots
     busy = [s for s in day["slots"] if s["state"] == "busy"]
-    assert len(busy) == 2
+    assert len(busy) == 4  # two 1-hour meetings = four 30-minute slots
     first = next(s for s in busy if s["meeting"]["staff_name"] == "Staff One")
     assert first["meeting"]["is_mine"] is False and first["meeting"]["ref_no"] is None
     mine = next(s for s in busy if s["meeting"]["staff_name"] == "Staff Two")
@@ -197,8 +199,8 @@ async def test_validation_rules(client: AsyncClient, ctx):
     resp = await _book(client, ctx, _slot(-3))
     assert resp.json()["error"]["code"] in ("slot_in_past", "outside_hours")
     assert (await _book(client, ctx, _slot(2, 8, 30))).json()["error"]["code"] == "outside_hours"
-    assert (await _book(client, ctx, _slot(2, 17))).json()["error"]["code"] == "outside_hours"
-    resp = await _book(client, ctx, _slot(2, 10, minutes=60))
+    assert (await _book(client, ctx, _slot(2, 16, 30))).json()["error"]["code"] == "outside_hours"
+    resp = await _book(client, ctx, _slot(2, 10, minutes=30))
     assert resp.json()["error"]["code"] == "invalid_slot_length"
     assert (await _book(client, ctx, _slot(2, 10, 15))).json()["error"]["code"] == "invalid_slot"
     saturday = _workday(1)
@@ -206,7 +208,7 @@ async def test_validation_rules(client: AsyncClient, ctx):
         saturday += timedelta(days=1)
     tz = ZoneInfo(settings.business_timezone)
     start = datetime.combine(saturday, time(10), tz)
-    weekend = {"start_at": start.isoformat(), "end_at": (start + timedelta(minutes=30)).isoformat()}
+    weekend = {"start_at": start.isoformat(), "end_at": (start + timedelta(minutes=60)).isoformat()}
     assert (await _book(client, ctx, weekend)).json()["error"]["code"] == "outside_hours"
     body = {"slots": [_slot(2, 10), _slot(2, 11)]}
     resp = await _book(client, ctx, **body)
@@ -304,3 +306,84 @@ async def test_booking_late_skips_past_reminders(
     # Booked only 3h before: the 24h reminder is skipped; the 1h one still goes out.
     assert await send_due_reminders(db, now=start - timedelta(hours=2)) == 0
     assert await send_due_reminders(db, now=start - timedelta(minutes=30)) == 1
+
+
+async def test_general_inquiry_meets_the_team_admin_in_their_own_calendar(
+    client: AsyncClient, db: AsyncSession, ctx
+):
+    await create_user(db, email="lead@example.com", role=UserRole.ADMIN, full_name="Team Lead")
+    lead = auth_header(await login(client, "lead@example.com"))
+    resp = await client.post(
+        "/api/v1/inquiries",
+        json={
+            "visa_type_id": TEAM,
+            "kind": "general",
+            "subject": "Question about my case",
+            "description": "When will my visa be lodged?",
+        },
+        headers=ctx["cust"],
+    )
+    assert resp.status_code == 201, resp.text
+    general = resp.json()
+    assert general["kind"] == "general"
+
+    # Staff don't see general inquiries; the team admin can't hand them to staff.
+    staff_list = (await client.get("/api/v1/inquiries", headers=ctx["s1"])).json()["items"]
+    assert all(i["id"] != general["id"] for i in staff_list)
+    gid = general["id"]
+    assert (await client.get(f"/api/v1/inquiries/{gid}", headers=ctx["s1"])).status_code == 404
+    staff = (await client.get("/api/v1/staff", headers=lead)).json()
+    s1 = next(s for s in staff if s["email"] == "s1@example.com")
+    resp = await client.post(
+        f"/api/v1/inquiries/{gid}/assign", json={"staff_id": s1["id"]}, headers=lead
+    )
+    assert resp.json()["error"]["code"] == "general_inquiry"
+    body = {"inquiry_id": gid, "mode": "phone", "slots": [_slot(3, 11, 30)]}
+    assert (await client.post(API, json=body, headers=ctx["admin"])).status_code == 403
+
+    # A consultation at 11:30 in the agent's calendar doesn't block the team admin's calendar.
+    assert (await _book(client, ctx, _slot(3, 11, 30))).status_code == 201
+    email_service.outbox.clear()
+    resp = await client.post(API, json=body, headers=lead)
+    assert resp.status_code == 201, resp.text
+    meeting = resp.json()
+    assert meeting["staff"]["email"] == "lead@example.com"  # the team admin hosts it
+    assert meeting["inquiry"]["kind"] == "general"
+    # The super admin isn't involved in team admin meetings.
+    boss = await _inbox(client, ctx["admin"])
+    assert all(n.get("data", {}).get("meeting_id") != meeting["id"] for n in boss)
+    assert not _emails_to("admin@example.com")
+
+    # The team calendar shows it; the agent's calendar shows only the consultation.
+    day = _workday(3).isoformat()
+    team_cal = await client.get(
+        f"{API}/calendar", params={"start": day, "days": 1, "team_id": TEAM}, headers=lead
+    )
+    agent_cal = await client.get(f"{API}/calendar", params={"start": day, "days": 1}, headers=lead)
+    team_busy = [s for s in team_cal.json()["days"][0]["slots"] if s["state"] == "busy"]
+    agent_busy = [s for s in agent_cal.json()["days"][0]["slots"] if s["state"] == "busy"]
+    assert [s["meeting"]["id"] for s in team_busy] == [meeting["id"]] * 2
+    assert all(s["meeting"]["id"] != meeting["id"] for s in agent_busy) and len(agent_busy) == 2
+
+    # One meeting at a time in the team calendar, too.
+    other = (
+        await client.post(
+            "/api/v1/inquiries",
+            json={
+                "visa_type_id": TEAM,
+                "kind": "general",
+                "subject": "Another question",
+                "description": "Something else to ask.",
+            },
+            headers=ctx["cust"],
+        )
+    ).json()
+    resp = await client.post(
+        API, json=body | {"inquiry_id": other["id"], "slots": [_slot(3, 12)]}, headers=lead
+    )
+    assert resp.json()["error"]["code"] == "slot_taken"
+    # Super admins can't decline a team admin's meeting.
+    resp = await client.post(
+        f"{API}/{meeting['id']}/decline", json={"reason": "Busy then"}, headers=ctx["admin"]
+    )
+    assert resp.json()["error"]["code"] == "not_consultation"
