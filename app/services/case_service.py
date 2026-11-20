@@ -445,7 +445,7 @@ async def sign(
     if kind == CaseFileKind.CONTRACT:
         require_stage(app, CaseStage.AGREEMENT)
         source = active_file(app, CaseFileKind.CONTRACT)
-        target, title = CaseFileKind.SIGNED_CONTRACT, "Service contract"
+        target, title = CaseFileKind.SIGNED_CONTRACT, "Contract"
     elif kind == CaseFileKind.DATA_CONFIRMATION:
         require_stage(app, CaseStage.CONFIRMATION)
         source = active_file(app, CaseFileKind.DATA_CONFIRMATION)

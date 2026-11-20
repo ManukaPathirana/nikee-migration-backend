@@ -15,7 +15,6 @@ from app.schemas.visa import (
     ApplicationDetail,
     AssignIn,
     ChangesIn,
-    CheckoutIn,
     CheckoutOut,
     DownloadUrlOut,
     ReasonIn,
@@ -173,14 +172,11 @@ async def invoice_file_url(
 
 
 @router.post("/invoices/{invoice_id}/checkout", response_model=CheckoutOut)
-async def checkout(
-    invoice_id: uuid.UUID, user: CustomerUser, db: DbSession, data: CheckoutIn | None = None
-) -> CheckoutOut:
-    """Customer: pick the payment type (optional) and start paying. Open the returned URL; it
-    brings them back to the app."""
+async def checkout(invoice_id: uuid.UUID, user: CustomerUser, db: DbSession) -> CheckoutOut:
+    """Customer: start paying. Open the returned URL; it brings them back to the app.
+    The payment type is set by staff or the team admin, not by the customer."""
     inv, app = await cases.get_invoice(db, invoice_id, user)
-    payment_type = data.payment_type if data else None
-    return CheckoutOut(url=await cases.checkout(db, inv, app, user, payment_type))
+    return CheckoutOut(url=await cases.checkout(db, inv, app, user))
 
 
 @router.post("/invoices/{invoice_id}/confirm", response_model=ApplicationDetail)

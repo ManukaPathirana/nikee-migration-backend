@@ -233,19 +233,24 @@ async def test_full_visa_case_journey(client: AsyncClient, ctx):
             headers=ctx["staff"],
         )
         assert r.status_code == 200, r.text
-    resp = await client.post(f"{case}/finalize", json={"amount": "1800"}, headers=ctx["staff"])
+    resp = await client.post(
+        f"{case}/finalize",
+        json={"amount": "1800", "payment_type": "Full payment of visa application fee"},
+        headers=ctx["staff"],
+    )
     detail = resp.json()
     assert detail["stage"] == "final_payment"
     final = next(i for i in detail["invoices"] if i["kind"] == "final")
-    assert final["payment_type"] is None  # none chosen: the default label is used
-    assert final["description"].startswith("Final payment")
+    assert final["payment_type"] == "Full payment of visa application fee"  # chosen by staff
 
-    # The customer says what they are paying for; it is saved and printed on the invoice.
-    short = await client.post(
-        f"{API}/invoices/{final['id']}/checkout", json={"payment_type": "x"}, headers=ctx["cust"]
+    # Staff chose the payment type; the customer can't change it when paying.
+    resp = await client.post(
+        f"{API}/invoices/{final['id']}/checkout",
+        json={"payment_type": "Other"},
+        headers=ctx["cust"],
     )
-    assert short.json()["error"]["code"] == "invalid_payment_type"
-    await _pay(client, ctx, final["id"], "Full payment of visa application fee")
+    assert resp.status_code == 200
+    await _pay(client, ctx, final["id"])
     final = next(
         i
         for i in (await client.get(case, headers=ctx["cust"])).json()["invoices"]
