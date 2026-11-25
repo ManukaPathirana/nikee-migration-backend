@@ -110,9 +110,15 @@ async def update_company(data: CompanyUpdate, user: SuperAdminUser, db: DbSessio
     company = await get_company_row(db)
     changes = data.model_dump(exclude_unset=True, mode="json")
     for field, value in changes.items():
-        if field in {"phone", "email", "whatsapp", "address", "about", "bank_details"} and (
-            value == ""
-        ):
+        if field in {
+            "phone",
+            "email",
+            "whatsapp",
+            "address",
+            "about",
+            "bank_details",
+            "google_review_url",
+        } and (value == ""):
             value = None
         if field == "website_url" and value is not None:
             value = value.rstrip("/")

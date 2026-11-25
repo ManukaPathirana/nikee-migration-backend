@@ -17,6 +17,7 @@ class CompanyOut(ORMModel):
     address: str | None
     socials: dict[str, Any] | None
     bank_details: str | None = None
+    google_review_url: str | None = None
 
 
 class CompanyUpdate(BaseModel):
@@ -29,3 +30,4 @@ class CompanyUpdate(BaseModel):
     address: str | None = Field(default=None, max_length=1000)
     socials: dict[str, str] | None = None
     bank_details: str | None = Field(default=None, max_length=2000)
+    google_review_url: HttpUrl | Literal[""] | None = None  # "" clears the field

@@ -108,3 +108,23 @@ async def test_company_bank_details(client: AsyncClient, db):
     body["bank_details"] = ""
     r = await client.put("/api/v1/admin/company", json=body, headers=h["admin"])
     assert r.json()["bank_details"] is None
+
+
+async def test_company_google_review_link(client: AsyncClient, db):
+    h = await _people(client, db)
+    db.add(CompanyInfo(name="Nikee Migrations"))
+    await db.commit()
+    url = "https://g.page/r/CabcDEF123/review"
+    r = await client.put(
+        "/api/v1/admin/company", json={"google_review_url": url}, headers=h["admin"]
+    )
+    assert r.status_code == 200, r.text
+    assert (await client.get("/api/v1/company")).json()["google_review_url"] == url
+    r = await client.put(
+        "/api/v1/admin/company", json={"google_review_url": "not a link"}, headers=h["admin"]
+    )
+    assert r.status_code == 422
+    r = await client.put(
+        "/api/v1/admin/company", json={"google_review_url": ""}, headers=h["admin"]
+    )
+    assert r.json()["google_review_url"] is None

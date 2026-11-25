@@ -67,6 +67,8 @@ class CompanyInfo(UUIDPkMixin, TimestampMixin, Base):
     address: Mapped[str | None] = mapped_column(Text)
     # How customers pay outside the app (consultation fees): bank, account name and number...
     bank_details: Mapped[str | None] = mapped_column(Text)
+    # "Write a review" link of the Google Business Profile; customers are sent there after rating.
+    google_review_url: Mapped[str | None] = mapped_column(String(500))
     socials: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
 
 

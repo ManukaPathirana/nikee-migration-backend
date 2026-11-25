@@ -153,6 +153,8 @@ Tests use the pooled engine (all tests share one event loop) and cheap argon2 se
 - Customers: `GET /admin/customers`, `GET /admin/customers/{id}` (profile + applications + inquiries),
   `POST /admin/customers/{id}/active`. Deactivating revokes refresh tokens; access tokens stop working
   immediately because `get_current_user` checks `is_active`.
+- Company `google_review_url` (Google Business Profile review link, "" clears): the app
+  invites customers to post their review on Google (apps can't post Google reviews).
 - Reviews: `POST /reviews` (customer, completed inquiry, one per inquiry), `GET /reviews` (own),
   `GET /reviews/public` (visible + unflagged, author shown as "Jane P."), `GET/PATCH /admin/reviews`.
 - Visa types: `GET/POST /admin/visa-types`, `PATCH /admin/visa-types/{id}`,
