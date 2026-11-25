@@ -21,6 +21,12 @@ class Settings(BaseSettings):
     # Times in emails are shown in this zone (apps show the device's local time).
     business_timezone: str = "Asia/Colombo"
     cors_origins: str = ""
+    # Browsers allowed to call the API besides CORS_ORIGINS: the hosted web app (its Vercel
+    # project addresses, including preview deployments) and any nikeeworld.com subdomain.
+    cors_origin_regex: str = (
+        r"https://(nikee-migration-frontend[a-z0-9-]*\.vercel\.app"
+        r"|([a-z0-9-]+\.)?nikeeworld\.com)"
+    )
 
     # Database
     database_url: str

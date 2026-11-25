@@ -50,10 +50,14 @@ def create_app() -> FastAPI:
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origin_list,
-        # Any localhost port in development (Flutter web picks random ports).
+        # The hosted web app; in development also any localhost port (Flutter web picks
+        # random ports).
         allow_origin_regex=(
-            None if settings.is_production else r"https?://(localhost|127\.0\.0\.1)(:\d+)?"
-        ),
+            settings.cors_origin_regex
+            if settings.is_production
+            else rf"({settings.cors_origin_regex}|https?://(localhost|127\.0\.0\.1)(:\d+)?)"
+        )
+        or None,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],

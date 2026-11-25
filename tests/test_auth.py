@@ -277,3 +277,17 @@ async def test_email_check_is_super_admin_only(client: AsyncClient, db: AsyncSes
     body = resp.json()
     assert body["backend"] == "memory" and body["ok"] is False and body["problem"]
     assert "smtp_password" not in body
+
+
+async def test_hosted_web_app_may_call_the_api(client: AsyncClient):
+    """CORS: the web app on Vercel / nikeeworld.com is allowed; other sites aren't."""
+    for origin, allowed in [
+        ("https://nikee-migration-frontend.vercel.app", True),
+        ("https://app.nikeeworld.com", True),
+        ("https://evil.example.com", False),
+    ]:
+        resp = await client.options(
+            "/api/v1/auth/login",
+            headers={"Origin": origin, "Access-Control-Request-Method": "POST"},
+        )
+        assert (resp.headers.get("access-control-allow-origin") == origin) is allowed, origin
