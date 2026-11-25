@@ -19,8 +19,12 @@ class VisaType(UUIDPkMixin, TimestampMixin, Base):
     sort_order: Mapped[int] = mapped_column(default=0, server_default=text("0"))
 
     # selectin: always loaded with the visa type, whichever path loaded it (async can't lazy-load).
+    # The visa type's own list; extra documents requested for one case are not part of it.
     requirements: Mapped[list["DocumentRequirement"]] = relationship(
-        back_populates="visa_type",
+        primaryjoin=(
+            "and_(VisaType.id == DocumentRequirement.visa_type_id, "
+            "DocumentRequirement.application_id.is_(None))"
+        ),
         cascade="all, delete-orphan",
         order_by="DocumentRequirement.sort_order",
         lazy="selectin",
@@ -50,8 +54,12 @@ class DocumentRequirement(UUIDPkMixin, TimestampMixin, Base):
     # once the staff member approves the signed contract and deposit.
     is_intake: Mapped[bool] = mapped_column(default=False, server_default=false())
     sort_order: Mapped[int] = mapped_column(default=0, server_default=text("0"))
+    # Set for an extra document the staff member or team admin requested for one case only.
+    application_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("visa_applications.id", ondelete="CASCADE"), index=True
+    )
 
-    visa_type: Mapped[VisaType] = relationship(back_populates="requirements")
+    visa_type: Mapped[VisaType] = relationship(viewonly=True)
 
 
 class VisaApplication(UUIDPkMixin, TimestampMixin, Base):
@@ -89,6 +97,13 @@ class VisaApplication(UUIDPkMixin, TimestampMixin, Base):
     )
     invoices: Mapped[list["Invoice"]] = relationship(  # noqa: F821
         cascade="all, delete-orphan", order_by="Invoice.created_at.desc()"
+    )
+    # Extra documents requested for this case only (shown after the visa type's list).
+    extra_requirements: Mapped[list["DocumentRequirement"]] = relationship(
+        primaryjoin="VisaApplication.id == DocumentRequirement.application_id",
+        cascade="all, delete-orphan",
+        order_by="DocumentRequirement.created_at",
+        lazy="selectin",
     )
 
 

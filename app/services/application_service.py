@@ -145,6 +145,7 @@ def base_query() -> Select[tuple[VisaApplication]]:
             selectinload(VisaApplication.documents),
             selectinload(VisaApplication.files),
             selectinload(VisaApplication.invoices),
+            selectinload(VisaApplication.extra_requirements),
             joinedload(VisaApplication.customer),
             joinedload(VisaApplication.assigned_staff),
         )
@@ -163,12 +164,17 @@ def _latest_by_requirement(app: VisaApplication) -> dict[uuid.UUID, ApplicationD
     return latest
 
 
+def all_requirements(app: VisaApplication) -> list:
+    """The visa type's checklist plus extra documents requested for this case."""
+    return [*app.visa_type.requirements, *app.extra_requirements]
+
+
 def visible_requirements(app: VisaApplication) -> list:
     """Customers see only the documents to start with (passport, visa grant) until their signed
     contract and deposit are approved; then the whole checklist."""
     from app.core.viewer import viewer_is_customer
 
-    reqs = list(app.visa_type.requirements)
+    reqs = all_requirements(app)
     if viewer_is_customer() and not documents_unlocked(app):
         reqs = [r for r in reqs if r.is_intake]
     return reqs
@@ -416,7 +422,11 @@ async def upload_document(
     requirement = None
     if requirement_id is not None:
         requirement = await db.get(DocumentRequirement, requirement_id)
-        if requirement is None or requirement.visa_type_id != app.visa_type_id:
+        if (
+            requirement is None
+            or requirement.visa_type_id != app.visa_type_id
+            or requirement.application_id not in (None, app.id)
+        ):
             raise BadRequest(
                 "This document is not part of the checklist", code="invalid_requirement"
             )

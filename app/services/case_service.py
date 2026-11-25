@@ -21,6 +21,7 @@ from app.models import (
     CaseFileKind,
     CaseStage,
     CompanyInfo,
+    DocumentRequirement,
     DocumentStatus,
     Invoice,
     InvoiceKind,
@@ -32,6 +33,7 @@ from app.models import (
 from app.services import job_queue, payment_service, pdf_service
 from app.services.application_service import (
     _latest_by_requirement,
+    all_requirements,
     base_query,
     get_application,
     set_stage,
@@ -810,7 +812,7 @@ async def finalize(
     latest = _latest_by_requirement(app)
     missing = [
         r.name
-        for r in app.visa_type.requirements
+        for r in all_requirements(app)
         if r.is_mandatory and (r.id not in latest or latest[r.id].status != DocumentStatus.APPROVED)
     ]
     if missing:
@@ -844,6 +846,84 @@ async def finalize(
         app, "Your final invoice is ready", "Open the app to pay the final invoice securely."
     )
     return app
+
+
+# ---------------------------------------------------------------- extra documents
+
+
+async def request_document(
+    db: AsyncSession,
+    app: VisaApplication,
+    user: User,
+    *,
+    name: str,
+    description: str | None,
+    is_mandatory: bool,
+) -> VisaApplication:
+    """Staff member / team admin: ask the customer for a document that isn't in the visa
+    type's list. It is added to this case's checklist only (documents step)."""
+    require_handler(app, user)
+    require_stage(app, CaseStage.DOCUMENTS)
+    name = name.strip()
+    if any(r.name.strip().lower() == name.lower() for r in all_requirements(app)):
+        raise Conflict(f"'{name}' is already in the checklist", code="already_in_checklist")
+    req = DocumentRequirement(
+        visa_type_id=app.visa_type_id,
+        application_id=app.id,
+        name=name,
+        description=(description or "").strip() or None,
+        is_mandatory=is_mandatory,
+        sort_order=1000 + len(app.extra_requirements),
+    )
+    db.add(req)
+    await db.flush()
+    audit(
+        db,
+        actor_id=user.id,
+        action="case.request_document",
+        entity="visa_application",
+        entity_id=app.id,
+        meta={"requirement_id": str(req.id), "name": name, "mandatory": is_mandatory},
+    )
+    _tell(
+        db,
+        app,
+        app.customer_id,
+        f"Please upload: {name}",
+        f"{contact_name(app.visa_type)} asked for one more document for {app.ref_no}.",
+    )
+    await db.commit()
+    app = await _reload(db, app, user)
+    note = f" ({req.description})" if req.description else ""
+    await _email_customer(
+        app,
+        "One more document is needed",
+        f"Please upload this document in the app: {name}{note}.",
+    )
+    return app
+
+
+async def remove_requested_document(
+    db: AsyncSession, app: VisaApplication, user: User, requirement_id: uuid.UUID
+) -> VisaApplication:
+    """Take back an extra document request (anything already uploaded for it is kept under
+    other documents)."""
+    require_handler(app, user)
+    require_stage(app, CaseStage.DOCUMENTS)
+    req = next((r for r in app.extra_requirements if r.id == requirement_id), None)
+    if req is None:
+        raise NotFound("Only documents requested for this case can be removed")
+    app.extra_requirements.remove(req)
+    audit(
+        db,
+        actor_id=user.id,
+        action="case.remove_requested_document",
+        entity="visa_application",
+        entity_id=app.id,
+        meta={"requirement_id": str(requirement_id), "name": req.name},
+    )
+    await db.commit()
+    return await _reload(db, app, user)
 
 
 # ---------------------------------------------------------------- confirmation

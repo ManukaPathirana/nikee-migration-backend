@@ -202,6 +202,12 @@ confirmation -> confirmation_review -> completed (or withdrawn). `waiting_on` sa
   Stripe Checkout (AUD) when `PAYMENTS_BACKEND=stripe` + `STRIPE_SECRET_KEY`, else a built-in test
   page (never in production). Payments are confirmed by the webhook
   (`/payments/stripe/webhook`), the return page, or `POST /invoices/{id}/confirm`.
+- Extra documents for one case (documents stage, case staff or team admin):
+  `POST /applications/{id}/requested-documents` (name, description, is_mandatory) adds a
+  `document_requirements` row with `application_id` set (customer notified + emailed);
+  `DELETE .../requested-documents/{req_id}` takes it back. `VisaType.requirements` excludes
+  these rows; `application_service.all_requirements(app)` = visa type list + case extras
+  (checklist, progress, finalize).
 - `GET /admin/team-overview`: per staff member cases by phase, tasks waiting on them, overdue (>48h).
 
 ## Rules

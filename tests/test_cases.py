@@ -464,3 +464,57 @@ async def test_team_admin_starts_a_case_for_existing_and_new_customers(
         headers=ctx["lead"],
     )
     assert resp.json()["error"]["code"] == "not_a_customer"
+
+
+async def test_request_extra_document_for_one_case(client: AsyncClient, db: AsyncSession, ctx):
+    app = await _case(client, ctx)
+    case = f"{API}/applications/{app['id']}"
+    body = {"name": "Bank statement (6 months)", "description": "From your main account"}
+
+    # Only at the documents step.
+    resp = await client.post(f"{case}/requested-documents", json=body, headers=ctx["lead"])
+    assert resp.json()["error"]["code"] == "wrong_stage"
+    from app.models import VisaApplication
+
+    row = await db.get(VisaApplication, app["id"])
+    row.stage = "documents"
+    await db.commit()
+
+    # Only the case's handler (team admin here; nobody assigned) - not the customer or others.
+    for who in ("cust", "other"):
+        resp = await client.post(f"{case}/requested-documents", json=body, headers=ctx[who])
+        assert resp.status_code in (403, 404), resp.text
+    resp = await client.post(f"{case}/requested-documents", json=body, headers=ctx["lead"])
+    assert resp.status_code == 200, resp.text
+    names = [i["requirement"]["name"] for i in resp.json()["checklist"]]
+    assert names == ["Passport", "Visa grant", "Offer letter", "Bank statement (6 months)"]
+    extra = resp.json()["checklist"][-1]["requirement"]
+    assert extra["application_id"] == app["id"] and extra["is_mandatory"] is True
+    resp = await client.post(f"{case}/requested-documents", json=body, headers=ctx["lead"])
+    assert resp.json()["error"]["code"] == "already_in_checklist"
+
+    # The customer sees it, is told, and can upload it.
+    detail = (await client.get(case, headers=ctx["cust"])).json()
+    assert detail["checklist"][-1]["requirement"]["name"] == "Bank statement (6 months)"
+    assert detail["progress"]["required"] == 4
+    notes = (await client.get(f"{API}/notifications", headers=ctx["cust"])).json()["items"]
+    assert any("Bank statement" in n["title"] for n in notes)
+    up = await client.post(
+        f"{case}/documents",
+        files={"file": ("bank.pdf", make_pdf("bank"), "application/pdf")},
+        data={"requirement_id": extra["id"]},
+        headers=ctx["cust"],
+    )
+    assert up.status_code == 201, up.text
+
+    # Not part of the visa type's own list, nor of other cases.
+    vt = (await client.get(f"{API}/visa-types/student")).json()
+    assert "Bank statement (6 months)" not in [r["name"] for r in vt["requirements"]]
+
+    # Finalize waits for it; it can be taken back (the upload stays under other documents).
+    resp = await client.post(f"{case}/finalize", json={"amount": "1800"}, headers=ctx["lead"])
+    assert resp.json()["error"]["code"] == "documents_not_approved"
+    resp = await client.delete(f"{case}/requested-documents/{extra['id']}", headers=ctx["lead"])
+    assert resp.status_code == 200, resp.text
+    assert len(resp.json()["checklist"]) == 3
+    assert [d["file_name"] for d in resp.json()["other_documents"]] == ["bank.pdf"]

@@ -22,6 +22,8 @@ class RequirementOut(ORMModel):
     is_mandatory: bool
     is_intake: bool = False  # passport / visa grant: can be uploaded before the contract
     sort_order: int
+    # Set when the staff member or team admin requested it for this case only.
+    application_id: uuid.UUID | None = None
 
 
 class VisaTypeBrief(ORMModel):
@@ -163,6 +165,14 @@ class CaseStartIn(BaseModel):
         if self.customer_id is None and len((self.full_name or "").strip()) < 2:
             raise ValueError("Enter the new customer's name")
         return self
+
+
+class DocumentRequestIn(BaseModel):
+    """Staff / team admin: ask the customer for a document that isn't in the visa type's list."""
+
+    name: str = Field(min_length=2, max_length=200)
+    description: str | None = Field(default=None, max_length=1000)
+    is_mandatory: bool = True
 
 
 class CustomerPick(ORMModel):

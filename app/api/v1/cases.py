@@ -19,6 +19,7 @@ from app.schemas.visa import (
     ChangesIn,
     CheckoutOut,
     CustomerPick,
+    DocumentRequestIn,
     DownloadUrlOut,
     ReasonIn,
     SignIn,
@@ -135,6 +136,36 @@ async def finalize(
     """Staff: every required document is approved; send the final invoice."""
     app = await apps.get_application(db, app_id, staff)
     return apps.to_detail(await cases.finalize(db, app, staff, data.amount, data.payment_type))
+
+
+@router.post("/applications/{app_id}/requested-documents", response_model=ApplicationDetail)
+async def request_document(
+    app_id: uuid.UUID, data: DocumentRequestIn, staff: StaffOrAdmin, db: DbSession
+) -> ApplicationDetail:
+    """Staff / team admin: ask the customer for a document that isn't in the visa type's
+    list (documents step); it is added to this case's checklist."""
+    app = await apps.get_application(db, app_id, staff)
+    return apps.to_detail(
+        await cases.request_document(
+            db,
+            app,
+            staff,
+            name=data.name,
+            description=data.description,
+            is_mandatory=data.is_mandatory,
+        )
+    )
+
+
+@router.delete(
+    "/applications/{app_id}/requested-documents/{requirement_id}",
+    response_model=ApplicationDetail,
+)
+async def remove_requested_document(
+    app_id: uuid.UUID, requirement_id: uuid.UUID, staff: StaffOrAdmin, db: DbSession
+) -> ApplicationDetail:
+    app = await apps.get_application(db, app_id, staff)
+    return apps.to_detail(await cases.remove_requested_document(db, app, staff, requirement_id))
 
 
 @router.post("/applications/{app_id}/confirmation", response_model=ApplicationDetail)
