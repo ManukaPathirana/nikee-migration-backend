@@ -16,6 +16,7 @@ class CompanyOut(ORMModel):
     whatsapp: str | None
     address: str | None
     socials: dict[str, Any] | None
+    bank_details: str | None = None
 
 
 class CompanyUpdate(BaseModel):
@@ -27,3 +28,4 @@ class CompanyUpdate(BaseModel):
     whatsapp: str | None = Field(default=None, max_length=40)
     address: str | None = Field(default=None, max_length=1000)
     socials: dict[str, str] | None = None
+    bank_details: str | None = Field(default=None, max_length=2000)

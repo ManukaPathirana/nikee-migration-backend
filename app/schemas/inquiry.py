@@ -73,6 +73,14 @@ class InquiryOut(ORMModel):
     closed_at: datetime | None
     created_at: datetime
     updated_at: datetime
+    # Consultation fee (paid outside the app, receipt approved by the team admin)
+    fee_status: str = "none"
+    fee_cents: int | None = None
+    fee_currency: str = "AUD"
+    fee_receipt_name: str | None = None
+    fee_receipt_uploaded_at: datetime | None = None
+    fee_rejection_reason: str | None = None
+    fee_approved_at: datetime | None = None
 
 
 class HistoryOut(ORMModel):
@@ -99,6 +107,15 @@ class InquiryDetail(InquiryOut):
 
 class StatusChangeIn(BaseModel):
     status: InquiryStatus
+    reason: str | None = Field(default=None, max_length=1000)
+
+
+class FeeIn(BaseModel):
+    amount: str = Field(min_length=1, max_length=20, description="Dollars, e.g. 150 or 150.50")
+
+
+class FeeReviewIn(BaseModel):
+    approve: bool
     reason: str | None = Field(default=None, max_length=1000)
 
 

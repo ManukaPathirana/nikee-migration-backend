@@ -506,3 +506,197 @@ async def add_note(
         )
     await db.commit()
     return note
+
+
+# ---------------------------------------------------------------- consultation fee
+
+FEE_OPEN = {"none", "requested", "rejected", "receipt_uploaded"}
+
+
+def _require_consultation_admin(inquiry: Inquiry, user: User) -> None:
+    if not (is_admin(user) and can_access_team(user, inquiry.visa_type_id)):
+        raise Forbidden("Only this team's admin can do this")
+    if inquiry.kind != "consultation":
+        raise BadRequest("Only consultations have a fee", code="not_consultation")
+    if inquiry.status in FINAL:
+        raise BadRequest("This inquiry is closed", code="inquiry_closed")
+
+
+async def _fee_email(inquiry: Inquiry, heading: str, message: str, reason: str | None = None):
+    await job_queue.send_email(
+        to=inquiry.customer.email,
+        subject=f"{heading} · {inquiry.ref_no}",
+        template="inquiry_update.html",
+        context={
+            "name": inquiry.customer.full_name,
+            "heading": heading,
+            "message": message,
+            "reason": reason,
+            "ref_no": inquiry.ref_no,
+            "subject": inquiry.subject,
+            "status": inquiry.status.value,
+        },
+    )
+
+
+def _money(cents: int, currency: str) -> str:
+    from app.services.pdf_service import money
+
+    return money(cents, currency)
+
+
+async def set_fee(db: AsyncSession, inquiry: Inquiry, admin: User, amount: str) -> None:
+    """Team admin: the consultation fee the customer pays outside the app."""
+    from app.services.case_service import parse_amount
+
+    _require_consultation_admin(inquiry, admin)
+    if inquiry.fee_status == "approved":
+        raise BadRequest("The fee is already paid and approved", code="fee_approved")
+    cents = parse_amount(amount)
+    inquiry.fee_cents = cents
+    inquiry.fee_currency = "AUD"
+    if inquiry.fee_status in ("none", "rejected"):
+        inquiry.fee_status = "requested"
+    audit(
+        db,
+        actor_id=admin.id,
+        action="inquiry.fee_set",
+        entity="inquiry",
+        entity_id=inquiry.id,
+        meta={"amount_cents": cents},
+    )
+    fee = _money(cents, inquiry.fee_currency)
+    notify(
+        db,
+        user_id=inquiry.customer_id,
+        type="inquiry_fee",
+        title=f"Consultation fee: {fee}",
+        body=f"Pay {fee} by bank transfer and upload your receipt in {inquiry.ref_no}.",
+        data={"inquiry_id": str(inquiry.id)},
+    )
+    await db.commit()
+    await _fee_email(
+        inquiry,
+        "Your consultation fee",
+        f"The fee for your consultation is {fee}. Please pay it by bank transfer (the bank details "
+        "are in the app, on your inquiry) and upload the receipt there. We'll book your meeting "
+        "once the payment is confirmed.",
+    )
+
+
+async def upload_fee_receipt(db: AsyncSession, inquiry: Inquiry, customer: User, file) -> None:
+    """Customer: the receipt of the consultation fee paid outside the app."""
+    import uuid as _uuid
+
+    from app.core.config import settings
+    from app.services.storage_service import ALLOWED_TYPES, get_storage, sniff_file_type
+
+    if inquiry.customer_id != customer.id:
+        raise Forbidden("Only the customer can upload the receipt")
+    if inquiry.fee_status not in ("requested", "rejected", "receipt_uploaded"):
+        raise BadRequest("There's no fee to pay for this inquiry yet", code="no_fee")
+    data = await file.read(settings.max_upload_bytes + 1)
+    if len(data) > settings.max_upload_bytes:
+        raise BadRequest(
+            f"Files must be {settings.max_upload_bytes // (1024 * 1024)} MB or smaller",
+            code="file_too_large",
+            status_code=413,
+        )
+    mime = sniff_file_type(data) if data else None
+    if mime is None:
+        raise BadRequest(
+            "Upload the receipt as a PDF, JPG or PNG", code="unsupported_file_type", status_code=415
+        )
+    key = f"inquiries/{inquiry.id}/receipt-{_uuid.uuid4().hex}{ALLOWED_TYPES[mime]}"
+    await get_storage().save(key, data, mime)
+    old_key = inquiry.fee_receipt_key
+    inquiry.fee_receipt_key = key
+    inquiry.fee_receipt_name = (file.filename or "receipt")[:255]
+    inquiry.fee_receipt_mime = mime
+    inquiry.fee_receipt_uploaded_at = utcnow()
+    inquiry.fee_status = "receipt_uploaded"
+    inquiry.fee_rejection_reason = None
+    admins = await db.scalars(
+        select(User.id).where(
+            User.role == UserRole.ADMIN,
+            User.team_id == inquiry.visa_type_id,
+            User.is_active.is_(True),
+        )
+    )
+    for admin_id in admins:
+        notify(
+            db,
+            user_id=admin_id,
+            type="inquiry_fee_receipt",
+            title=f"Payment receipt to check: {inquiry.ref_no}",
+            body=f"{inquiry.customer.full_name} uploaded the consultation fee receipt.",
+            data={"inquiry_id": str(inquiry.id)},
+        )
+    await db.commit()
+    if old_key and old_key != key:
+        import contextlib
+
+        with contextlib.suppress(Exception):
+            await get_storage().delete(old_key)
+
+
+async def fee_receipt_url(inquiry: Inquiry, user: User) -> str:
+    from app.services.storage_service import get_storage
+
+    if not inquiry.fee_receipt_key:
+        raise NotFound("No receipt uploaded")
+    return await get_storage().download_url(
+        inquiry.fee_receipt_key,
+        inquiry.fee_receipt_name or "receipt",
+        inquiry.fee_receipt_mime or "application/octet-stream",
+    )
+
+
+async def review_fee(
+    db: AsyncSession, inquiry: Inquiry, admin: User, approve: bool, reason: str | None
+) -> None:
+    """Team admin: the receipt is right (the meeting can now be booked), or ask for a new one."""
+    _require_consultation_admin(inquiry, admin)
+    if inquiry.fee_status != "receipt_uploaded":
+        raise BadRequest("There's no receipt waiting to be checked", code="no_receipt")
+    reason = (reason or "").strip() or None
+    if not approve and not reason:
+        raise BadRequest("Tell the customer what's wrong with the receipt", code="reason_required")
+    fee = _money(inquiry.fee_cents or 0, inquiry.fee_currency)
+    if approve:
+        inquiry.fee_status = "approved"
+        inquiry.fee_approved_at = utcnow()
+        title, body = (
+            "Payment confirmed",
+            f"We received your {fee} consultation fee. We'll book your meeting soon.",
+        )
+    else:
+        inquiry.fee_status = "rejected"
+        inquiry.fee_rejection_reason = reason
+        title, body = "Please upload your receipt again", reason
+    audit(
+        db,
+        actor_id=admin.id,
+        action="inquiry.fee_approved" if approve else "inquiry.fee_rejected",
+        entity="inquiry",
+        entity_id=inquiry.id,
+        meta={"reason": reason} if reason else None,
+    )
+    notify(
+        db,
+        user_id=inquiry.customer_id,
+        type="inquiry_fee",
+        title=title,
+        body=body,
+        data={"inquiry_id": str(inquiry.id)},
+    )
+    await db.commit()
+    if approve:
+        await _fee_email(inquiry, "Payment confirmed", body)
+    else:
+        await _fee_email(
+            inquiry,
+            "Please upload your receipt again",
+            "We couldn't confirm your consultation fee payment. Please upload the receipt again.",
+            reason,
+        )

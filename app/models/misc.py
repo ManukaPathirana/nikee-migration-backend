@@ -65,6 +65,8 @@ class CompanyInfo(UUIDPkMixin, TimestampMixin, Base):
     email: Mapped[str | None] = mapped_column(String(320))
     whatsapp: Mapped[str | None] = mapped_column(String(40))
     address: Mapped[str | None] = mapped_column(Text)
+    # How customers pay outside the app (consultation fees): bank, account name and number...
+    bank_details: Mapped[str | None] = mapped_column(Text)
     socials: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
 
 

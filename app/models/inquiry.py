@@ -46,6 +46,18 @@ class Inquiry(UUIDPkMixin, TimestampMixin, Base):
         ForeignKey("users.id", ondelete="SET NULL")
     )
     closed_at: Mapped[datetime | None]
+    # Consultation fee, paid outside the app (bank transfer). The team admin sets the amount, the
+    # customer uploads a receipt, the team admin approves it; then the meeting can be booked.
+    # fee_status: none | requested | receipt_uploaded | approved | rejected
+    fee_status: Mapped[str] = mapped_column(String(20), default="none", server_default="none")
+    fee_cents: Mapped[int | None]
+    fee_currency: Mapped[str] = mapped_column(String(3), default="AUD", server_default="AUD")
+    fee_receipt_key: Mapped[str | None] = mapped_column(String(500))
+    fee_receipt_name: Mapped[str | None] = mapped_column(String(255))
+    fee_receipt_mime: Mapped[str | None] = mapped_column(String(100))
+    fee_receipt_uploaded_at: Mapped[datetime | None]
+    fee_rejection_reason: Mapped[str | None] = mapped_column(Text)
+    fee_approved_at: Mapped[datetime | None]
 
     customer: Mapped["User"] = relationship(foreign_keys=[customer_id])
     assigned_staff: Mapped["User | None"] = relationship(foreign_keys=[assigned_staff_id])

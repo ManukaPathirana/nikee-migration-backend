@@ -42,6 +42,7 @@ async def _new_inquiry(
     *,
     team: str = TEAM,
     kind: str = "consultation",
+    paid_by: dict | None = None,
 ) -> str:
     resp = await client.post(
         "/api/v1/inquiries",
@@ -54,7 +55,22 @@ async def _new_inquiry(
         headers=cust,
     )
     assert resp.status_code == 201, resp.text
-    return resp.json()["id"]
+    iid = resp.json()["id"]
+    if kind == "consultation" and paid_by:
+        await pay_consultation_fee(client, iid, cust, paid_by)
+    return iid
+
+
+async def pay_consultation_fee(client: AsyncClient, iid: str, cust: dict, admin: dict) -> None:
+    """Fee set by the admin, receipt uploaded by the customer, approved: meeting can be booked."""
+    base = f"/api/v1/inquiries/{iid}"
+    r = await client.post(f"{base}/fee", json={"amount": "150"}, headers=admin)
+    assert r.status_code == 200, r.text
+    files = {"file": ("r.png", b"\x89PNG\r\n\x1a\n" + b"0" * 40, "image/png")}
+    r = await client.post(f"{base}/fee-receipt", files=files, headers=cust)
+    assert r.status_code == 200, r.text
+    r = await client.post(f"{base}/fee/review", json={"approve": True}, headers=admin)
+    assert r.status_code == 200, r.text
 
 
 @pytest.fixture
@@ -80,7 +96,7 @@ async def ctx(client: AsyncClient, db: AsyncSession) -> dict:
         for k in ("cust", "s1", "lead", "lead2", "admin")
     }
     h["appeal"] = str(appeal.id)
-    h["inquiry_id"] = await _new_inquiry(client, h["cust"])
+    h["inquiry_id"] = await _new_inquiry(client, h["cust"], paid_by=h["admin"])
     email_service.outbox.clear()
     return h
 
@@ -135,7 +151,9 @@ async def test_staff_cant_book_and_agent_calendar_is_shared_by_all_teams(client:
     slot = _slot(3, 11, 30)
     assert (await _book(client, ctx, slot)).status_code == 201
     # Another team's consultation can't take the same or an overlapping time.
-    other = await _new_inquiry(client, ctx["cust"], "Appeal question", team=ctx["appeal"])
+    other = await _new_inquiry(
+        client, ctx["cust"], "Appeal question", team=ctx["appeal"], paid_by=ctx["admin"]
+    )
     other_ctx = ctx | {"inquiry_id": other}
     resp = await _book(client, other_ctx, slot, headers=ctx["lead2"])
     assert resp.status_code == 409 and resp.json()["error"]["code"] == "slot_taken"

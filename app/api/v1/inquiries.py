@@ -1,8 +1,9 @@
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, File, Query, UploadFile, status
 
+from app.core.config import settings
 from app.core.deps import (
     AdminUser,
     CurrentUser,
@@ -15,6 +16,8 @@ from app.models import InquiryStatus
 from app.schemas.common import Page, PageParams, page_params
 from app.schemas.inquiry import (
     AssignIn,
+    FeeIn,
+    FeeReviewIn,
     HistoryOut,
     InquiryCreate,
     InquiryDetail,
@@ -22,6 +25,7 @@ from app.schemas.inquiry import (
     NoteIn,
     StatusChangeIn,
 )
+from app.schemas.visa import DownloadUrlOut
 from app.services import inquiry_service as svc
 
 router = APIRouter(prefix="/inquiries", tags=["inquiries"])
@@ -119,4 +123,46 @@ async def add_note(
     """Staff/admin notes are internal by default; customer notes are always visible to staff."""
     inquiry = await svc.get_inquiry(db, inquiry_id, user)
     await svc.add_note(db, inquiry, user, body=data.body, is_internal=data.is_internal)
+    return svc.to_detail(await svc.get_inquiry(db, inquiry_id, user), user)
+
+
+# ---------------------------------------------------------------- consultation fee
+
+
+@router.post("/{inquiry_id}/fee", response_model=InquiryDetail)
+async def set_fee(
+    inquiry_id: uuid.UUID, data: FeeIn, user: AdminUser, db: DbSession
+) -> InquiryDetail:
+    """Team admin: the consultation fee (AUD) the customer pays outside the app."""
+    inquiry = await svc.get_inquiry(db, inquiry_id, user)
+    await svc.set_fee(db, inquiry, user, data.amount)
+    return svc.to_detail(await svc.get_inquiry(db, inquiry_id, user), user)
+
+
+@router.post("/{inquiry_id}/fee-receipt", response_model=InquiryDetail)
+async def upload_fee_receipt(
+    inquiry_id: uuid.UUID, user: CustomerUser, db: DbSession, file: UploadFile = File(...)
+) -> InquiryDetail:
+    """Customer: upload the payment receipt (PDF, JPG or PNG)."""
+    inquiry = await svc.get_inquiry(db, inquiry_id, user)
+    await svc.upload_fee_receipt(db, inquiry, user, file)
+    return svc.to_detail(await svc.get_inquiry(db, inquiry_id, user), user)
+
+
+@router.get("/{inquiry_id}/fee-receipt/download-url", response_model=DownloadUrlOut)
+async def fee_receipt_url(
+    inquiry_id: uuid.UUID, user: CurrentUser, db: DbSession
+) -> DownloadUrlOut:
+    inquiry = await svc.get_inquiry(db, inquiry_id, user)
+    url = await svc.fee_receipt_url(inquiry, user)
+    return DownloadUrlOut(url=url, expires_in=settings.signed_url_expire_seconds)
+
+
+@router.post("/{inquiry_id}/fee/review", response_model=InquiryDetail)
+async def review_fee(
+    inquiry_id: uuid.UUID, data: FeeReviewIn, user: AdminUser, db: DbSession
+) -> InquiryDetail:
+    """Team admin: approve the receipt (the meeting can then be booked) or ask for a new one."""
+    inquiry = await svc.get_inquiry(db, inquiry_id, user)
+    await svc.review_fee(db, inquiry, user, data.approve, data.reason)
     return svc.to_detail(await svc.get_inquiry(db, inquiry_id, user), user)

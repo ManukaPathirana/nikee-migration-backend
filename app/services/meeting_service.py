@@ -301,6 +301,11 @@ async def create_meeting(
     if not allowed:
         raise Forbidden("The team admin books meetings for inquiries", code="team_admin_only")
     agent = None
+    if inquiry.kind == "consultation" and inquiry.fee_status != "approved":
+        raise BadRequest(
+            "Approve the consultation fee payment before booking the meeting",
+            code="fee_not_approved",
+        )
     if inquiry.kind == "consultation":
         agent = staff if staff.role == UserRole.SUPER_ADMIN else await _migration_agent(db)
         if agent is None:

@@ -99,6 +99,11 @@ OTP codes: 6 digits, 10 min, max 5 wrong attempts; stored as HMAC hashes.
   `consultation`: the team admin books in the migration agent's shared calendar and the super
   admin (`_migration_agent`) hosts it; `general`: the team admin books in their own team calendar
   (`GET /meetings/calendar?team_id=`) and hosts it. `GET /meetings?host=me` = meetings I host.
+- Consultation fee (paid outside the app, AUD): `POST /inquiries/{id}/fee` (team admin, `{amount}`)
+  -> `fee_status` requested; `POST /inquiries/{id}/fee-receipt` (customer, multipart PDF/JPG/PNG)
+  -> receipt_uploaded; `GET /inquiries/{id}/fee-receipt/download-url`; `POST /inquiries/{id}/fee/review`
+  (team admin, `{approve, reason}`) -> approved | rejected. Booking a consultation needs
+  `fee_status == approved` (400 `fee_not_approved`). Customers pay to `company_info.bank_details`.
 - Meetings are 1 hour = two 30-minute slots (`MEETING_MINUTES`); one meeting at a time per calendar.
 - The super admin attends every meeting, so all teams share ONE calendar: 30-minute slots,
   Mon-Fri 9:00-17:00 in `BUSINESS_TIMEZONE`, one meeting per slot (checked under a pg advisory
