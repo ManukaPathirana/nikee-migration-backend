@@ -375,3 +375,92 @@ async def test_payment_gateway_settings(client: AsyncClient, ctx, monkeypatch):
     monkeypatch.setattr(settings, "app_env", "test")
     r = await client.post(f"{API}/invoices/{inv}/checkout", headers=ctx["staff"])
     assert r.status_code == 403
+
+
+async def test_team_admin_starts_a_case_for_existing_and_new_customers(
+    client: AsyncClient, db: AsyncSession, ctx
+):
+    from app.services import email_service
+    from tests.conftest import last_email
+
+    # Find the customer.
+    found = (
+        await client.get(f"{API}/admin/customer-search", params={"q": "cust"}, headers=ctx["lead"])
+    ).json()
+    assert [c["email"] for c in found] == ["cust@example.com"]
+    cust_id = found[0]["id"]
+    resp = await client.get(
+        f"{API}/admin/customer-search", params={"q": "cust"}, headers=ctx["staff"]
+    )
+    assert resp.status_code == 403
+
+    # Existing customer: the case waits for their first step.
+    resp = await client.post(
+        f"{API}/admin/cases",
+        json={"customer_id": cust_id, "note": "Please send these this week"},
+        headers=ctx["lead"],
+    )
+    assert resp.status_code == 201, resp.text
+    case = resp.json()
+    assert case["stage"] == "intake" and case["waiting_on"] == "customer"
+    assert case["customer"]["email"] == "cust@example.com"
+    note = (await client.get(f"{API}/notifications", headers=ctx["cust"])).json()["items"][0]
+    assert note["title"] == "Your Student visa case has started"
+    mail = last_email("cust@example.com")
+    assert mail["context"]["link"].endswith(f"/#/customer/applications/{case['id']}")
+    assert mail["context"]["reason"] == "Please send these this week"
+    # The customer sees it and can do the first step.
+    mine = (await client.get(f"{API}/applications", headers=ctx["cust"])).json()["items"]
+    assert [a["id"] for a in mine] == [case["id"]]
+    # Only one open case per visa type.
+    again = await client.post(
+        f"{API}/admin/cases", json={"customer_id": cust_id}, headers=ctx["lead"]
+    )
+    assert again.status_code == 409 and again.json()["error"]["code"] == "case_exists"
+
+    # New customer by email: they get an email to sign up, and see the case after signing up.
+    email_service.outbox.clear()
+    resp = await client.post(
+        f"{API}/admin/cases",
+        json={"email": "New.Person@example.com", "full_name": "New Person", "phone": "0771234567"},
+        headers=ctx["lead"],
+    )
+    assert resp.status_code == 201, resp.text
+    new_case = resp.json()
+    invite = last_email("new.person@example.com")
+    assert invite["context"]["link"].endswith("/#/register")
+    reg = await client.post(
+        f"{API}/auth/register",
+        json={"email": "new.person@example.com", "password": "Sup3rSecret!", "full_name": "New P"},
+    )
+    assert reg.status_code == 201, reg.text
+    code = last_email("new.person@example.com")["context"]["code"]
+    tokens = (
+        await client.post(
+            f"{API}/auth/verify-email", json={"email": "new.person@example.com", "code": code}
+        )
+    ).json()
+    newbie = {"Authorization": f"Bearer {tokens.get('tokens', tokens)['access_token']}"}
+    mine = (await client.get(f"{API}/applications", headers=newbie)).json()["items"]
+    assert [a["id"] for a in mine] == [new_case["id"]]
+
+    # Staff can't start cases; a team admin can't for another team; staff emails are refused.
+    resp = await client.post(
+        f"{API}/admin/cases", json={"customer_id": cust_id}, headers=ctx["staff"]
+    )
+    assert resp.status_code == 403
+    other_team = VisaType(name="Appeal", slug="appeal", sort_order=1)
+    db.add(other_team)
+    await db.commit()
+    resp = await client.post(
+        f"{API}/admin/cases",
+        json={"customer_id": cust_id, "visa_type_id": str(other_team.id)},
+        headers=ctx["lead"],
+    )
+    assert resp.status_code == 403
+    resp = await client.post(
+        f"{API}/admin/cases",
+        json={"email": "staff@example.com", "full_name": "Staff"},
+        headers=ctx["lead"],
+    )
+    assert resp.json()["error"]["code"] == "not_a_customer"

@@ -181,6 +181,9 @@ confirmation -> confirmation_review -> completed (or withdrawn). `waiting_on` sa
   case to the team admin (`case_new` notification). Other documents return 403 `documents_locked`
   until the staff member approves the signed contract and deposit.
 - `/confirmation/request-changes` (customer, reason): recalls the final papers, back to staff.
+- Team admin starts a case: `GET /admin/customer-search?q=` then `POST /admin/cases` (customer_id, or
+  email + full_name for a new customer: an unverified account is created and they claim it by
+  signing up with that email). Case starts at intake; customer notified + emailed (sign-up link).
 - Customers see the team admin instead of the handling staff member everywhere (`core/viewer.py`).
 - `POST /applications/{id}/assign` (team admin), `/agreement` (staff: contract PDF + deposit),
   `/sign` (customer: drawn signature PNG; backend adds a signature page via pypdf/reportlab),

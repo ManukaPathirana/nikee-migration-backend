@@ -2,20 +2,23 @@
 
 import html
 import uuid
+from typing import Annotated
 
-from fastapi import APIRouter, File, Form, Header, Request, UploadFile
+from fastapi import APIRouter, File, Form, Header, Query, Request, UploadFile
 from fastapi.responses import HTMLResponse
 
 from app.core.config import settings
 from app.core.deps import AdminUser, CurrentUser, CustomerUser, DbSession, StaffOrAdmin
 from app.core.errors import BadRequest, NotFound
-from app.models import CaseFileKind, Invoice, InvoiceStatus
+from app.models import CaseFileKind, Invoice, InvoiceStatus, User
 from app.schemas.visa import (
     AmountIn,
     ApplicationDetail,
     AssignIn,
+    CaseStartIn,
     ChangesIn,
     CheckoutOut,
+    CustomerPick,
     DownloadUrlOut,
     ReasonIn,
     SignIn,
@@ -33,6 +36,32 @@ def _device(request: Request) -> str | None:
 
 
 # ---------------------------------------------------------------- steps
+
+
+@router.get("/admin/customer-search", response_model=list[CustomerPick])
+async def customer_search(
+    admin: AdminUser, db: DbSession, q: Annotated[str, Query(min_length=2, max_length=100)]
+) -> list[User]:
+    """Team admin: find a customer to start a visa case for (name, email or phone)."""
+    return await cases.search_customers(db, q)
+
+
+@router.post("/admin/cases", response_model=ApplicationDetail, status_code=201)
+async def start_case(data: CaseStartIn, admin: AdminUser, db: DbSession) -> ApplicationDetail:
+    """Team admin: open a visa case for an existing or new customer; it waits for their first
+    step (passport and visa grant)."""
+    app = await cases.start_case(
+        db,
+        admin,
+        customer_id=data.customer_id,
+        email=str(data.email) if data.email else None,
+        full_name=data.full_name,
+        phone=data.phone,
+        visa_type_id=data.visa_type_id,
+        destination_country=data.destination_country,
+        note=data.note,
+    )
+    return apps.to_detail(app)
 
 
 @router.post("/applications/{app_id}/assign", response_model=ApplicationDetail)

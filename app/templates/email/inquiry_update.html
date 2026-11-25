@@ -4,6 +4,9 @@
 <h2 style="margin:0 0 12px;font-size:20px;font-weight:600;color:#0B2A4A;">{{ heading }}</h2>
 <p style="margin:0 0 16px;">Hi {{ name }},</p>
 <p style="margin:0 0 16px;">{{ message }}</p>
+{% if link %}
+<p style="margin:0 0 20px;"><a href="{{ link }}" style="display:inline-block;padding:12px 20px;background:#0B2A4A;color:#FFFFFF;border-radius:10px;text-decoration:none;font-weight:600;">{{ link_label or "Open" }}</a></p>
+{% endif %}
 {% if reason %}
 <p style="margin:0 0 16px;padding:12px 16px;background:#F7F8FA;border-radius:12px;">Note from our team: {{ reason }}</p>
 {% endif %}

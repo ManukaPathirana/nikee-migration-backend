@@ -8,11 +8,11 @@ from decimal import Decimal, InvalidOperation
 from pathlib import PurePath
 
 from fastapi import UploadFile
-from sqlalchemy import func, select, text
+from sqlalchemy import func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.core.errors import BadRequest, Forbidden, NotFound
+from app.core.errors import BadRequest, Conflict, Forbidden, NotFound
 from app.core.permissions import can_access_team, is_admin
 from app.core.security import utcnow
 from app.core.viewer import contact_name
@@ -263,6 +263,177 @@ async def _reload(db: AsyncSession, app: VisaApplication, user: User) -> VisaApp
 
 
 # ---------------------------------------------------------------- team admin
+
+
+async def search_customers(db: AsyncSession, q: str, limit: int = 10) -> list[User]:
+    """Team admins pick the customer to start a case for (name, email or phone)."""
+    like = f"%{q.strip()}%"
+    return list(
+        await db.scalars(
+            select(User)
+            .where(
+                User.role == UserRole.CUSTOMER,
+                User.is_active.is_(True),
+                User.deleted_at.is_(None),
+                or_(User.full_name.ilike(like), User.email.ilike(like), User.phone.ilike(like)),
+            )
+            .order_by(User.full_name)
+            .limit(limit)
+        )
+    )
+
+
+async def start_case(
+    db: AsyncSession,
+    admin: User,
+    *,
+    customer_id: uuid.UUID | None,
+    email: str | None,
+    full_name: str | None,
+    phone: str | None,
+    visa_type_id: uuid.UUID | None,
+    destination_country: str,
+    note: str | None,
+) -> VisaApplication:
+    """Team admin opens a visa case for a customer: it waits for their first step (passport and
+    visa grant). A new customer gets an account to claim by signing up with that email."""
+    from app.models import CustomerProfile, VisaType
+    from app.services.application_service import next_case_ref
+    from app.services.auth_service import get_user_by_email, normalize_email
+
+    team_id = admin.team_id if admin.role == UserRole.ADMIN else visa_type_id
+    if team_id is None:
+        raise BadRequest("Choose the visa type (team)", code="team_required")
+    if admin.role == UserRole.ADMIN and visa_type_id not in (None, admin.team_id):
+        raise Forbidden("You can start cases for your own team only")
+    visa = await db.get(VisaType, team_id)
+    if visa is None or not visa.is_active:
+        raise BadRequest("This visa type isn't available", code="invalid_visa_type")
+
+    new_account = False
+    if customer_id is not None:
+        customer = await db.get(User, customer_id)
+        if (
+            customer is None
+            or customer.role != UserRole.CUSTOMER
+            or customer.deleted_at is not None
+            or not customer.is_active
+        ):
+            raise NotFound("Customer not found")
+    else:
+        customer = await get_user_by_email(db, email or "")
+        if customer is not None and (
+            customer.role != UserRole.CUSTOMER or customer.deleted_at is not None
+        ):
+            raise BadRequest(
+                "This email belongs to a staff or admin account", code="not_a_customer"
+            )
+        if customer is not None and not customer.is_active:
+            raise BadRequest("This customer's account is deactivated", code="inactive_customer")
+        if customer is None:
+            customer = User(
+                email=normalize_email(email or ""),
+                password_hash=None,  # set when they sign up with this email
+                role=UserRole.CUSTOMER,
+                full_name=(full_name or "").strip(),
+                phone=(phone or "").strip() or None,
+                is_verified=False,
+            )
+            customer.customer_profile = CustomerProfile()
+            db.add(customer)
+            await db.flush()
+            new_account = True
+
+    open_case = await db.scalar(
+        select(VisaApplication.ref_no).where(
+            VisaApplication.customer_id == customer.id,
+            VisaApplication.visa_type_id == visa.id,
+            VisaApplication.stage.notin_([CaseStage.COMPLETED.value, CaseStage.WITHDRAWN.value]),
+        )
+    )
+    if open_case:
+        raise Conflict(
+            f"{customer.full_name} already has an open {visa.name} case ({open_case})",
+            code="case_exists",
+        )
+
+    app = VisaApplication(
+        customer_id=customer.id,
+        visa_type_id=visa.id,
+        destination_country=destination_country.strip(),
+        ref_no=await next_case_ref(db),
+        stage=CaseStage.INTAKE.value,
+        stage_changed_at=utcnow(),
+    )
+    db.add(app)
+    await db.flush()
+    audit(
+        db,
+        actor_id=admin.id,
+        action="case.start",
+        entity="visa_application",
+        entity_id=app.id,
+        meta={"customer_id": str(customer.id), "new_account": new_account},
+    )
+    # Customers see the team admin: the one starting it, or the team's first admin.
+    who = admin.full_name if admin.role == UserRole.ADMIN else None
+    if who is None:
+        who = await db.scalar(
+            select(User.full_name)
+            .where(
+                User.role == UserRole.ADMIN,
+                User.team_id == visa.id,
+                User.is_active.is_(True),
+                User.deleted_at.is_(None),
+            )
+            .order_by(User.created_at)
+            .limit(1)
+        )
+    who = who or f"The {visa.name} team"
+    note = (note or "").strip() or None
+    notify(
+        db,
+        user_id=customer.id,
+        type="case_update",
+        title=f"Your {visa.name} visa case has started",
+        body=f"{who} opened case {app.ref_no}. Upload your passport and visa grant to begin.",
+        data={"application_id": str(app.id), "stage": app.stage},
+    )
+    await db.commit()
+
+    web = settings.web_app_url.rstrip("/")
+    if new_account:
+        heading = "Your visa case is ready"
+        message = (
+            f"{who} from Nikee Migrations has opened your {visa.name} visa case. Sign up with "
+            f"this email address ({customer.email}) in the Nikee Migrations app or website, "
+            "then upload your passport and visa grant to begin."
+        )
+        link, link_label = f"{web}/#/register", "Sign up"
+    else:
+        heading = "Your visa case has started"
+        message = (
+            f"{who} has opened your {visa.name} visa case. Open the Nikee Migrations app and "
+            "upload your passport and visa grant to begin."
+        )
+        link, link_label = f"{web}/#/customer/applications/{app.id}", "Open my case"
+    await job_queue.send_email(
+        to=customer.email,
+        subject=f"{heading} · {app.ref_no}",
+        template="inquiry_update.html",
+        context={
+            "name": customer.full_name,
+            "heading": heading,
+            "message": message,
+            "reason": note,
+            "ref_no": app.ref_no,
+            "subject": f"{visa.name} visa",
+            "status": STAGE_LABELS[CaseStage.INTAKE],
+            "link": link,
+            "link_label": link_label,
+        },
+    )
+    return await get_application(db, app.id, admin)
 
 
 async def assign(

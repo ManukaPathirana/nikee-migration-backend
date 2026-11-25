@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, EmailStr, Field, model_validator
 
 from app.models.enums import (
     ApplicationStatus,
@@ -142,6 +142,35 @@ class ApplicationDetail(ApplicationSummary):
 class ApplicationCreate(BaseModel):
     visa_type_id: uuid.UUID
     destination_country: str = Field(min_length=2, max_length=100)
+
+
+class CaseStartIn(BaseModel):
+    """Team admin: open a visa case for a customer. Give customer_id (existing account), or the
+    new customer's email and name (they get an email to sign up)."""
+
+    customer_id: uuid.UUID | None = None
+    email: EmailStr | None = None
+    full_name: str | None = Field(default=None, max_length=200)
+    phone: str | None = Field(default=None, max_length=40)
+    visa_type_id: uuid.UUID | None = None  # team admins: their own team (super admin: required)
+    destination_country: str = Field(default="Australia", min_length=2, max_length=100)
+    note: str | None = Field(default=None, max_length=1000)
+
+    @model_validator(mode="after")
+    def _who(self) -> "CaseStartIn":
+        if self.customer_id is None and self.email is None:
+            raise ValueError("Choose a customer or enter the new customer's email")
+        if self.customer_id is None and len((self.full_name or "").strip()) < 2:
+            raise ValueError("Enter the new customer's name")
+        return self
+
+
+class CustomerPick(ORMModel):
+    id: uuid.UUID
+    full_name: str
+    email: str
+    phone: str | None = None
+    is_verified: bool
 
 
 class ApplicationStatusIn(BaseModel):
