@@ -104,6 +104,23 @@ def _access_token() -> str:
     return creds.token
 
 
+def web_link(role: str, data: dict[str, str]) -> str:
+    """Where tapping a web push opens the web app. Mirrors the app's notificationTargetPath."""
+    area = {"customer": "customer", "staff": "staff"}.get(role, "admin")
+    path = f"/{area}/notifications"
+    if data.get("meeting_id"):
+        path = f"/{area}/meetings/{data['meeting_id']}"
+    elif data.get("inquiry_id"):
+        path = f"/{area}/inquiries/{data['inquiry_id']}"
+    elif data.get("application_id"):
+        app_id = data["application_id"]
+        path = {
+            "customer": f"/customer/applications/{app_id}",
+            "staff": f"/staff/queue/applications/{app_id}",
+        }.get(area, f"/admin/applications/{app_id}")
+    return f"{settings.web_app_url.rstrip('/')}/#{path}"
+
+
 async def send_to_user(
     user_id: uuid.UUID, title: str, body: str | None, data: dict[str, str]
 ) -> int:
@@ -111,33 +128,47 @@ async def send_to_user(
     if not is_enabled():
         return 0
     from app.db.session import SessionLocal
-    from app.models import DeviceToken
+    from app.models import DeviceToken, User
 
     async with SessionLocal() as db:
-        tokens = list(
-            await db.scalars(select(DeviceToken.fcm_token).where(DeviceToken.user_id == user_id))
-        )
-        if not tokens:
+        rows = (
+            await db.execute(
+                select(DeviceToken.fcm_token, DeviceToken.platform).where(
+                    DeviceToken.user_id == user_id
+                )
+            )
+        ).all()
+        if not rows:
             return 0
+        role = await db.scalar(select(User.role).where(User.id == user_id))
+        link = web_link(str(getattr(role, "value", role) or ""), data)
         access = await asyncio.to_thread(_access_token)
         url = f"https://fcm.googleapis.com/v1/projects/{project_id()}/messages:send"
         sent, stale = 0, []
         async with httpx.AsyncClient(timeout=15) as client:
-            for token in tokens:
-                message = {
-                    "message": {
-                        "token": token,
-                        "notification": {"title": title, "body": body or ""},
-                        "data": data,
-                        "android": {
-                            "priority": "high",
-                            "notification": {
-                                "channel_id": CHANNEL_ID,
-                                "click_action": "FLUTTER_NOTIFICATION_CLICK",
-                            },
+            for token, platform in rows:
+                message: dict = {
+                    "token": token,
+                    "notification": {"title": title, "body": body or ""},
+                    "data": data,
+                }
+                if platform == "web":
+                    # Browsers: shown by the web app's service worker; a tap opens the page.
+                    message["webpush"] = {
+                        "notification": {
+                            "icon": f"{settings.web_app_url.rstrip('/')}/icons/Icon-192.png"
+                        },
+                        "fcm_options": {"link": link},
+                    }
+                else:
+                    message["android"] = {
+                        "priority": "high",
+                        "notification": {
+                            "channel_id": CHANNEL_ID,
+                            "click_action": "FLUTTER_NOTIFICATION_CLICK",
                         },
                     }
-                }
+                message = {"message": message}
                 resp = await client.post(
                     url, json=message, headers={"Authorization": f"Bearer {access}"}
                 )

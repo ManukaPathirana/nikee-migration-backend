@@ -124,6 +124,8 @@ OTP codes: 6 digits, 10 min, max 5 wrong attempts; stored as HMAC hashes.
   When FCM is configured (`FCM_CREDENTIALS_JSON` on Vercel, or `FCM_CREDENTIALS_FILE`) a
   SQLAlchemy `after_commit` hook queues a `send_push` job per notification; otherwise nothing is sent.
   Notification `data` should carry `inquiry_id` / `meeting_id` / `application_id` so the app can open it.
+- Web push: tokens with platform `web` get a `webpush` block whose `fcm_options.link` opens the
+  page in the web app (`WEB_APP_URL`, `push_service.web_link`); Android tokens get the `android` block.
 
 ## Docker
 `docker compose up --build` (from backend/) runs db (host port 5433), redis, mailpit (:8025),

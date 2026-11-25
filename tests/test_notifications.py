@@ -172,3 +172,48 @@ async def test_super_admin_push_test(client: AsyncClient, h, db: AsyncSession, m
     assert [s[1:] for s in sent] == [("Test notification", "test")]
     inbox = (await client.get("/api/v1/notifications", headers=h["cust"])).json()["items"]
     assert inbox[0]["title"] == "Test notification"
+
+
+async def test_web_push_opens_the_right_page(client: AsyncClient, h, monkeypatch):
+    """Web (browser) tokens get a webpush block whose link opens the page in the web app."""
+    import json
+
+    import httpx
+
+    sent: list[dict] = []
+
+    def fake_fcm(request: httpx.Request) -> httpx.Response:
+        sent.append(json.loads(request.content)["message"])
+        return httpx.Response(200, json={"name": "ok"})
+
+    real_client = httpx.AsyncClient
+    monkeypatch.setattr(push_service, "is_enabled", lambda: True)
+    monkeypatch.setattr(push_service, "project_id", lambda: "p")
+    monkeypatch.setattr(push_service, "_access_token", lambda: "t")
+    monkeypatch.setattr(
+        push_service.httpx,
+        "AsyncClient",
+        lambda **kw: real_client(transport=httpx.MockTransport(fake_fcm)),
+    )
+    for token, platform in (("web-token-1", "web"), ("android-token-1", "android")):
+        resp = await client.post(
+            "/api/v1/me/device-tokens",
+            json={"fcm_token": token, "platform": platform},
+            headers=h["cust"],
+        )
+        assert resp.status_code == 204, resp.text
+    me = (await client.get("/api/v1/me", headers=h["cust"])).json()
+    import uuid
+
+    n = await push_service.send_to_user(
+        uuid.UUID(me["id"]), "Hello", "Body", {"application_id": "abc", "type": "case_update"}
+    )
+    assert n == 2
+    web = next(m for m in sent if m["token"] == "web-token-1")
+    assert web["webpush"]["fcm_options"]["link"].endswith("/#/customer/applications/abc")
+    assert "android" not in web
+    android = next(m for m in sent if m["token"] == "android-token-1")
+    assert android["android"]["notification"]["channel_id"] == push_service.CHANNEL_ID
+    assert "webpush" not in android
+    assert push_service.web_link("staff", {"inquiry_id": "i"}).endswith("/#/staff/inquiries/i")
+    assert push_service.web_link("super_admin", {}).endswith("/#/admin/notifications")
