@@ -323,7 +323,9 @@ async def issue_invite(db: AsyncSession, user: User, invited_by: User | None) ->
         context={
             "name": user.full_name,
             "invited_by": invited_by.full_name if invited_by else "The Nikee Migrations team",
-            "link": f"{settings.frontend_url}/#/accept-invite?token={token}",
+            # The hosted web app (WEB_APP_URL): FRONTEND_URL was never set on Vercel, so links
+            # pointed at localhost.
+            "link": f"{settings.web_app_url.rstrip('/')}/#/accept-invite?token={token}",
             "token": token,
             "hours": settings.invite_expire_hours,
         },

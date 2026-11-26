@@ -17,11 +17,12 @@ class Settings(BaseSettings):
     app_env: Literal["development", "production", "test"] = "development"
     app_name: str = "Nikee Migrations API"
     api_v1_prefix: str = "/api/v1"
-    frontend_url: str = "http://localhost:5000"
+    frontend_url: str = "http://localhost:5000"  # unused: email links use WEB_APP_URL
     # Times in emails are shown in this zone (apps show the device's local time).
     business_timezone: str = "Asia/Colombo"
     cors_origins: str = ""
-    # The hosted web app (links in web push notifications open it).
+    # The hosted web app: links in emails (invites, new cases) and web push open it. Set it to
+    # http://localhost:5000 in a local .env to open a local web app instead.
     web_app_url: str = "https://nikee-migration-frontend.vercel.app"
     # Browsers allowed to call the API besides CORS_ORIGINS: the hosted web app (its Vercel
     # project addresses, including preview deployments) and any nikeeworld.com subdomain.

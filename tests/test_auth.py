@@ -1,6 +1,7 @@
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.models import UserRole
 from app.services import auth_service, email_service
 from tests.conftest import PASSWORD, auth_header, create_user, last_email, login
@@ -187,6 +188,7 @@ async def test_staff_accepts_invite(client: AsyncClient, db: AsyncSession):
     mail = last_email("staff@example.com")
     token = mail["context"]["token"]
     assert token in mail["context"]["link"]
+    assert mail["context"]["link"].startswith(f"{settings.web_app_url}/#/accept-invite?token=")
 
     body = {"token": token, "password": "StaffPass1"}
     resp = await client.post(f"{API}/accept-invite", json=body)
